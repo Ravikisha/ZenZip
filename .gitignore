@@ -1,0 +1,9 @@
+target/
+node_modules/
+dist/
+*.node
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+npm-debug.log*
