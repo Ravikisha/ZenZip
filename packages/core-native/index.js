@@ -586,6 +586,7 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding
+module.exports.ZenRuntime = nativeBinding.ZenRuntime
 module.exports.asyncAdd = nativeBinding.asyncAdd
 module.exports.asyncEchoBuffer = nativeBinding.asyncEchoBuffer
 module.exports.benchSqliteQueue = nativeBinding.benchSqliteQueue

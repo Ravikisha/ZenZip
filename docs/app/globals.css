@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-background: #09090b;
+  --color-surface: #0e0e12;
+  --color-surface-2: #131318;
+  --color-edge: #26262e;
+  --color-edge-soft: #1c1c22;
+  --color-accent: #8b5cf6;
+  --color-accent-soft: #a78bfa;
+  --color-ink: #fafafa;
+  --color-ink-mid: #a1a1aa;
+  --color-ink-dim: #71717a;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 5.5rem;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-ink-mid);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgb(139 92 246 / 0.35);
+  color: #fff;
+}
+
+/* shiki blocks: transparent bg (container owns it), comfortable line height */
+.shiki {
+  background: transparent !important;
+  font-size: 0.8125rem;
+  line-height: 1.7;
+}
+.shiki code {
+  display: block;
+  width: fit-content;
+  min-width: 100%;
+}
+
+/* thin scrollbars for code + sidebar */
+.thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a33 transparent;
+}
+.thin-scroll::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+.thin-scroll::-webkit-scrollbar-thumb {
+  background: #2a2a33;
+  border-radius: 4px;
+}

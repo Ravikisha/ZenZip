@@ -6,6 +6,7 @@
   "dependencies": {
     "@zenzip/core-native": "workspace:*",
     "autocannon": "^8.0.0",
+    "express": "^5.2.1",
     "fastify": "^5.0.0",
     "mitata": "^1.0.0"
   }

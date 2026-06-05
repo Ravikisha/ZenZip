@@ -6,6 +6,9 @@
 
 #![deny(clippy::all)]
 
+pub mod logging;
+pub mod runtime_bindings;
+
 use std::sync::Arc;
 
 use http_body_util::Full;

@@ -1,0 +1,12 @@
+{
+  "name": "@zenzip/example-demo-dashboard",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "zenzip": "workspace:*"
+  }
+}

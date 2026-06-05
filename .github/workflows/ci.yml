@@ -26,6 +26,37 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
+  postgres:
+    name: Postgres multi-node tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: zenzip_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      ZENZIP_PG_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/zenzip_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p zenzip-core --test pg_test
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:native
+      - run: pnpm --filter zenzip build
+      - run: pnpm --filter zenzip exec vitest run test/pg.test.ts
+
   native:
     name: Native build + bench smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -44,6 +75,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:native
+      - run: pnpm --filter zenzip build
+      - run: pnpm --filter zenzip test
       - name: Bench smoke (sqlite + tsfn, reduced iterations)
         run: |
           node bench/sqlite.mjs

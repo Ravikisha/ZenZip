@@ -47,24 +47,32 @@
 
 ---
 
-## P0.6 — hyper vs Fastify HTTP (bench/http.mjs, load gen in child process)
+## P0.6 — hyper vs Fastify vs Express HTTP (bench/http.mjs, load gen in child process)
 
-10s × 64 connections, hello-world:
+64 connections, hello-world. Representative cold-machine run (10s/target):
 
 | Server | req/s | p50 | p99 |
 |---|---|---|---|
+| Express 5 (Node) | 5,200–6,200 | 8–9 ms | 40–57 ms |
 | Fastify (Node) | 19,800 | 2 ms | 14 ms |
 | hyper static (pure Rust) | 26,800 | 1 ms | 10 ms |
 | hyper → JS handler (TSFN) | 23,100 | 2 ms | 9 ms |
 
-- hyper static vs Fastify: **1.35×**
-- hyper → JS handler vs Fastify: **1.17×**
+Ratios across runs (laptop thermal variance — see methodology):
+
+- hyper static vs Fastify: **1.20–1.35×**
+- hyper → JS handler vs Fastify: **1.09–1.17×** (one throttle-skewed outlier at 1.56×)
+- hyper → JS handler vs Express: **~4–5×**
+- Fastify vs Express: **~3–4×**
 
 ### Findings
 
-1. **D5 verdict: NO-GO on "Rust HTTP for speed."** With real JS handlers in the path, the Rust front-end is only ~17% faster than Fastify — far below the >1.3× bar, nowhere near a migration motivator. The plan's prediction ("a naive Rust router calling JS handlers can fail to beat Fastify meaningfully") is confirmed by data.
-2. Methodology note: the first (naive) run had autocannon sharing the server's event loop and showed 2.55× — wrong by 2× on the Fastify baseline. Keep the child-process load-gen pattern for all future HTTP benches.
-3. **Decision: HTTP stays an adapter over Node servers (plan.md M9) for 1.0.** Latency tail (p99 14→9 ms) is the only real win; revisit post-1.0 only if tail latency becomes a user demand. Marketing must never lead with router benchmarks — durability is the story (as planned).
+1. **D5 verdict: NO-GO on "Rust HTTP for speed."** With real JS handlers in the path, the Rust front-end is only ~10–17% faster than Fastify — far below the >1.3× bar, nowhere near a migration motivator. The plan's prediction ("a naive Rust router calling JS handlers can fail to beat Fastify meaningfully") is confirmed by data.
+2. Express data point: everything is 4–5× Express, including plain Fastify. "Faster than Express" is table stakes, not a differentiator — any modern stack clears it. Reinforces marketing rule: never lead with router benchmarks.
+3. Methodology notes (keep for all future HTTP benches):
+   - Load gen must run in a child process — the first naive run had autocannon sharing the server's event loop and overstated hyper→JS by ~2× (showed 2.55×).
+   - Laptop thermal throttling penalizes later targets in sequential runs (hyper static swung 12.7k–26.8k req/s between runs). bench/http.mjs now runs interleaved rounds and reports best-of per target. Final numbers must come from a thermally stable server box.
+4. **Decision: HTTP stays an adapter over Node servers (plan.md M9) for 1.0.** Latency tail (p99 14→9 ms) is the only real win; revisit post-1.0 only if tail latency becomes a user demand. Durability is the story (as planned).
 
 ---
 
