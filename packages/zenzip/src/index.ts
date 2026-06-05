@@ -24,6 +24,7 @@ export type {
   LlmProvider,
   LlmRequest,
   LlmResponse,
+  LlmStreamHandler,
   LlmToolDef,
   LlmUsage,
 } from "./llm/types.js";

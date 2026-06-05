@@ -39,6 +39,7 @@ export const docsNav: NavGroup[] = [
   {
     title: "Project",
     items: [
+      { title: "Comparisons", href: "/docs/comparison" },
       { title: "Benchmarks", href: "/docs/benchmarks" },
       { title: "Roadmap", href: "/docs/roadmap" },
     ],

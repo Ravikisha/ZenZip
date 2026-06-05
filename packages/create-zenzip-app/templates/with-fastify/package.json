@@ -1,0 +1,14 @@
+{
+  "name": "zenzip-fastify-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/app.mjs",
+    "start": "node src/app.mjs"
+  },
+  "dependencies": {
+    "fastify": "^5.0.0",
+    "zenzip": "latest"
+  }
+}

@@ -11,5 +11,8 @@
     "bench:sqlite": "node bench/sqlite.mjs",
     "bench:http": "node bench/http.mjs"
   },
-  "packageManager": "pnpm@10.33.1"
+  "packageManager": "pnpm@10.33.1",
+  "devDependencies": {
+    "@changesets/cli": "^2.31.0"
+  }
 }

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts", "src/testing.ts"],
+  "tsconfig": "tsconfig.typedoc.json",
+  "out": "../../docs/public/api",
+  "name": "zenzip API",
+  "includeVersion": false,
+  "excludeInternal": true,
+  "excludePrivate": true,
+  "hideGenerator": true,
+  "navigationLinks": {
+    "Docs": "/docs/introduction",
+    "GitHub": "https://github.com"
+  },
+  "readme": "none"
+}

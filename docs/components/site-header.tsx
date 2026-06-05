@@ -14,6 +14,7 @@ function GithubMark({ className }: { className?: string }) {
 const links = [
   { title: "Docs", href: "/docs/introduction" },
   { title: "Workflows", href: "/docs/workflows" },
+  { title: "API", href: "/api/index.html" },
   { title: "Benchmarks", href: "/docs/benchmarks" },
   { title: "Roadmap", href: "/docs/roadmap" },
 ];

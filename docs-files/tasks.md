@@ -11,7 +11,7 @@ Goal: hard numbers on the NAPI boundary before committing to architecture claims
 
 - [x] **P0.1** Scaffold monorepo: cargo workspace (`crates/zenzip-core`, napi crate co-located in `packages/core-native`) + pnpm workspace (`packages/zenzip`, `packages/core-native`, `bench`)
 - [x] **P0.2** Set up napi-rs v3 build pipeline; produce a working `.node` binary loadable from TS on Windows (dev box), then mac/linux via CI — *built green on Windows; generated index.js/index.d.ts*
-- [~] **P0.3** CI: GitHub Actions matrix from napi-rs template (win x64, mac x64/arm64, linux gnu/musl x64/arm64) — green builds from week 1 — *workflow written (.github/workflows/ci.yml); needs repo push to validate*
+- [x] **P0.3** CI: GitHub Actions matrix (win/mac/linux × rust fmt+clippy+test, native build + TS suite, dedicated postgres-service job) — pushed and green
 - [x] **P0.4** Benchmark 1: JS→Rust call round-trip cost (sync fn, async fn, with 1KB / 64KB JSON payload) — *sync 14–34ns, async ~85µs (!), see spike-results.md*
 - [x] **P0.5** Benchmark 2: Rust→JS `ThreadsafeFunction` dispatch throughput (single + batched), simulating "Rust engine invokes JS step handler" — *27k/s sequential, 409k/s at 256 in-flight*
 - [x] **P0.6** Benchmark 3: minimal hyper server invoking JS handler per request vs raw Fastify hello-world — settles D5 (Rust HTTP go/no-go) — *NO-GO: hyper→JS only 1.17× fastify*
@@ -161,14 +161,16 @@ Goal: same API, horizontal scale; no consensus code.
 
 ## Phase 6 — DX, Docs, Launch (4 weeks, overlaps 5)
 
-- [ ] **P6.1** `create-zenzip-app` scaffolder: templates (basic, agent-app, with-fastify); under-2-min target
-- [ ] **P6.2** `zenzip dev`: watch mode, auto-dashboard, pretty logs; `zenzip doctor`: version-drift + config checks
-- [~] **P6.3** Docs site: BUILT (Next.js 16 in docs/ — landing page + 13 guide pages: getting started, durability/versioning concepts, queues/schedules/workflows/agents/events/machines/http-dashboard/configuration, benchmarks, roadmap); *typedoc API reference + dedicated comparison pages pending*
-- [ ] **P6.4** Test-kit package: time-travel (advance timers), step mocking, run assertions
-- [ ] **P6.5** Prebuild publishing: napi-rs npm prebuilds for full platform matrix; optional-deps install pattern; smoke-test installs on all platforms
-- [ ] **P6.6** Versioning/release automation (changesets), SemVer policy, public roadmap
-- [ ] **P6.7** Launch assets: demo video (P3.17 + agent demo), benchmark post, "why we built this" post, HN/Reddit/X launch
-- [ ] **P6.8** Community: GitHub discussions, Discord, CONTRIBUTING.md, good-first-issues
+- [x] **P6.1** `create-zenzip-app`: ALL THREE templates — basic (queue+schedule+workflow+dashboard), agent (tools, approval gate, offline mock / Claude via env), with-fastify (Fastify HTTP API triggering durable workflows, graceful shutdown ordering, idempotent order endpoint); name stamping, .gitignore, validation — all verified locally
+- [x] **P6.2** `zenzip` CLI: `dev <file>` (node --watch restart loop) + `doctor` (binding/store health, queue + DLQ summary with pointers, run status breakdown, workflow version-drift detection across in-flight runs, overdue schedules) — verified against a seeded store
+- [x] **P6.3** Docs site complete: landing + 14 guide pages incl. honest comparison page (vs Temporal / Inngest / BullMQ + "when NOT to use ZenZip") + typedoc API reference (`pnpm --filter zenzip docs:api` → docs/public/api, linked from the site header; generated artifact gitignored)
+- [x] **P6.4** Test-kit: `zenzip/testing` subpath — createTestApp (temp store, fast cadences, cleanup), waitFor, waitForRunStatus (fails fast on wrong terminal state); mock LLM helpers re-exported; *time-travel timers → backlog (engine clock is Rust-side)*
+- [~] **P6.5** Release pipeline written (.github/workflows/release.yml): 5-target prebuild matrix → napi artifacts → npm publish on v* tags; *needs NPM_TOKEN + first tagged run to validate; packages still private:true until then*
+- [x] **P6.6** Changesets installed + configured (.changeset/: zenzip + @zenzip/core-native version-fixed — TS API pinned to its native binary; bench/examples ignored); SemVer policy documented in .changeset/README.md; release flow = changeset version → tag → release.yml; public roadmap = docs site roadmap page
+- [ ] **P6.7** Launch assets: demo video (P3.17 script ready), benchmark post, "why we built this" post, HN/Reddit/X launch — *content work, manual*
+- [~] **P6.8** CONTRIBUTING.md written (standing rules, boundary ground rules, hard-won test-suite lessons); *Discord/discussions/good-first-issues → after public repo settles*
+
+**P0.7b (closed):** 4-process SQLite contention bench (bench/multiproc.mjs): 20,000/20,000 jobs exactly-once across 4 consumer processes + 1 producer on one WAL file; cross-process push 16.3k/s; drain ~830 jobs/s — multi-process is CORRECT but writer contention caps throughput; heavy multi-process = use Postgres (as designed, D8 documented).
 
 **Exit criteria:** `v1.0.0-rc`; external beta users running real workloads.
 

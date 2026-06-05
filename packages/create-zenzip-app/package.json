@@ -1,0 +1,17 @@
+{
+  "name": "create-zenzip-app",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Scaffold a ZenZip app: durable workflows, queues, schedules, and agents with zero infrastructure.",
+  "type": "module",
+  "bin": {
+    "create-zenzip-app": "bin/index.mjs"
+  },
+  "files": [
+    "bin",
+    "templates"
+  ],
+  "engines": {
+    "node": ">= 18"
+  }
+}

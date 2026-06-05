@@ -1,0 +1,86 @@
+# Release pipeline (P6.5/P6.6): build napi prebuilds for the full platform
+# matrix and publish to npm. Trigger: pushing a v* tag.
+# Needs: NPM_TOKEN secret. First run will need babysitting — prebuild
+# publishing always does.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Prebuild (${{ matrix.settings.target }})
+    runs-on: ${{ matrix.settings.host }}
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+          - host: macos-latest
+            target: x86_64-apple-darwin
+          - host: macos-latest
+            target: aarch64-apple-darwin
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - host: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.settings.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.settings.target }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build native module
+        run: pnpm --filter @zenzip/core-native exec napi build --platform --release --target ${{ matrix.settings.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: binding-${{ matrix.settings.target }}
+          path: packages/core-native/*.node
+          if-no-files-found: error
+
+  publish:
+    name: Publish to npm
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create platform packages from prebuilds
+        run: pnpm --filter @zenzip/core-native exec napi artifacts --dir ../../artifacts
+      - name: Build TypeScript package
+        run: pnpm --filter zenzip build
+      - name: Publish @zenzip/core-native (with platform packages)
+        run: pnpm --filter @zenzip/core-native exec napi prepublish -t npm --skip-gh-release
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish zenzip
+        run: pnpm --filter zenzip publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish create-zenzip-app
+        run: pnpm --filter create-zenzip-app publish --no-git-checks --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
