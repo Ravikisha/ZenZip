@@ -2,6 +2,7 @@ import type { JsExecRequest } from "@zenzip/core-native";
 
 import { ms, type Duration } from "./duration.js";
 import type { ZenzipApp } from "./app.js";
+import type { PayloadCodec } from "./payload.js";
 
 // ---------------------------------------------------------------------------
 // Public step API (P2.12) — frozen surface, see docs/workflow-semantics.md
@@ -11,9 +12,12 @@ export interface Step {
   /**
    * Durable step: the result is persisted; on retry/resume the function is
    * NOT re-executed — the recorded result is returned. Side effects belong
-   * inside step.run (idempotent where possible).
+   * inside step.run (idempotent where possible). With `opts.timeout` (P15.1),
+   * a run that exceeds it fails the step (then retries per stepRetries) instead
+   * of wedging a worker slot — pass an AbortSignal-aware fn to also cancel the
+   * underlying work.
    */
-  run<T>(id: string, fn: () => T | Promise<T>): Promise<T>;
+  run<T>(id: string, fn: () => T | Promise<T>, opts?: { timeout?: Duration }): Promise<T>;
   /** Durable sleep — holds zero resources; survives restarts. */
   sleep(id: string, duration: Duration): Promise<void>;
   /** Suspend until app.emit(event) or timeout. Resolves null on timeout.
@@ -37,6 +41,16 @@ export interface WorkflowContext<I = unknown> {
   step: Step;
   input: I;
   runId: string;
+  /**
+   * A deterministic idempotency key for an effect in this run (P7.13). Stable
+   * across retries and replays — derived from the run id and `label` — so an
+   * effect that runs inside a step but crashes before the result is journaled
+   * does not duplicate on re-execution. Pass it through to anything that
+   * dedupes: `flow.trigger(x, { idempotencyKey: ctx.idempotencyKey("order") })`,
+   * a Stripe `Idempotency-Key` header, an upstream API, etc. Use a distinct
+   * `label` per effect site.
+   */
+  idempotencyKey(label: string): string;
 }
 
 export type WorkflowFn<I, O> = (ctx: WorkflowContext<I>) => O | Promise<O>;
@@ -135,10 +149,30 @@ interface JournalEntry {
   result: string | null;
 }
 
+/** Race a step body against a timeout (P15.1). The underlying work isn't
+ * forcibly cancelled (JS can't abort an arbitrary promise) — the result is
+ * discarded; pass an AbortSignal-aware fn to cancel real I/O. */
+async function runWithTimeout<T>(fn: () => T | Promise<T>, timeoutMs: number, id: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`step "${id}" timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([Promise.resolve(fn()), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function makeStep(
   journal: Map<string, JournalEntry>,
   recordStep: (stepId: string, kind: string, result: string | null) => void,
   resolveWorkflowName: (wf: Workflow<any, any> | string) => string,
+  runId: string,
+  payloads?: PayloadCodec,
 ): Step {
   const usedIds = new Set<string>();
   const claim = (id: string, kind: string): JournalEntry | undefined => {
@@ -159,19 +193,26 @@ function makeStep(
   };
 
   return {
-    async run<T>(id: string, fn: () => T | Promise<T>): Promise<T> {
+    async run<T>(
+      id: string,
+      fn: () => T | Promise<T>,
+      opts?: { timeout?: Duration },
+    ): Promise<T> {
       const entry = claim(id, "run");
       if (entry) {
         return entry.result === null ? (undefined as T) : (JSON.parse(entry.result) as T);
       }
       let result: T;
       try {
-        result = await fn();
+        result =
+          opts?.timeout !== undefined ? await runWithTimeout(fn, ms(opts.timeout), id) : await fn();
       } catch (e) {
         throw new StepFailure(id, e);
       }
       const json = JSON.stringify(result ?? null);
-      recordStep(id, "run", json);
+      // Offload large results to the blob store (P9.1) before journaling.
+      const toStore = payloads ? await payloads.offload(runId, id, json) : json;
+      recordStep(id, "run", toStore);
       return result;
     },
 
@@ -246,6 +287,7 @@ export async function executeAttempt(
   recordStep: (stepId: string, kind: string, result: string | null) => void,
   resolveWorkflowName: (wf: Workflow<any, any> | string) => string,
   warn: (message: string) => void,
+  payloads?: PayloadCodec,
 ): Promise<string> {
   if (expectedVersion && req.version && expectedVersion !== req.version) {
     warn(
@@ -254,14 +296,22 @@ export async function executeAttempt(
     );
   }
   const entries = JSON.parse(req.journal) as JournalEntry[];
+  // Rehydrate any offloaded results (P9.1) before fast-forward — steps read
+  // their journal entries synchronously, so the real values must be in hand.
+  if (payloads) {
+    for (const e of entries) {
+      e.result = await payloads.rehydrate(e.result);
+    }
+  }
   const journal = new Map(entries.map((e) => [e.id, e]));
-  const step = makeStep(journal, recordStep, resolveWorkflowName);
+  const step = makeStep(journal, recordStep, resolveWorkflowName, req.runId, payloads);
 
   try {
     const output = await fn({
       step,
       input: JSON.parse(req.input),
       runId: req.runId,
+      idempotencyKey: (label: string) => `${req.runId}:${label}`,
     });
     return JSON.stringify({ type: "completed", output: JSON.stringify(output ?? null) });
   } catch (e) {
@@ -294,12 +344,38 @@ export class Workflow<I = unknown, O = unknown> {
     readonly _version: string,
   ) {}
 
+  /** Prior-version implementations, keyed by their content hash (P10.6). */
+  readonly #versions = new Map<string, WorkflowFn<I, O>>();
+
+  /**
+   * Register a previous implementation for version routing (P10.6). In-flight
+   * runs pinned to that definition's content hash keep executing the old
+   * function; new runs use the current one — so a deploy never re-runs live
+   * runs on changed logic. Keep the old function around and register it:
+   *
+   *   const order = app.workflow("order", newFn);
+   *   order.version(oldFn);   // self-hashes; old in-flight runs route here
+   */
+  version(legacyFn: WorkflowFn<I, O>): this {
+    this.#versions.set(hashDefinition(legacyFn.toString()), legacyFn);
+    return this;
+  }
+
+  /** @internal Pick the fn + version to run for a run's pinned version. */
+  _route(pinned: string | undefined): { fn: WorkflowFn<I, O>; version: string } {
+    if (pinned && this.#versions.has(pinned)) {
+      return { fn: this.#versions.get(pinned)!, version: pinned };
+    }
+    return { fn: this._fn, version: this._version };
+  }
+
   /** Start a run (durable from this moment). Returns immediately. */
   async trigger(input: I, options: TriggerOptions = {}): Promise<{ runId: string }> {
     const runId = this.app._native.triggerWorkflow(this.name, JSON.stringify(input ?? null), {
       idempotencyKey: options.idempotencyKey,
       delayMs: options.delay !== undefined ? ms(options.delay) : undefined,
     });
+    this.app._audit("workflow.trigger", this.name, { runId });
     return { runId };
   }
 
@@ -332,7 +408,9 @@ export class Workflow<I = unknown, O = unknown> {
 
   /** Cancel a run and all its child runs. Returns the number cancelled. */
   async cancel(runId: string): Promise<number> {
-    return this.app._native.cancelRun(runId);
+    const n = this.app._native.cancelRun(runId);
+    this.app._audit("workflow.cancel", this.name, { runId, cancelled: n });
+    return n;
   }
 
   #parseRun(raw: string): RunInfo<O> {

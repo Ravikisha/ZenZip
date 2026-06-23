@@ -71,6 +71,7 @@ async function doctor(dataDirArg?: string): Promise<void> {
       status: number;
       workflow: string;
       version: string | null;
+      updatedAt: number;
     }>;
     const byStatus = [0, 0, 0, 0, 0, 0, 0];
     for (const run of runs) byStatus[run.status] = (byStatus[run.status] ?? 0) + 1;
@@ -103,6 +104,18 @@ async function doctor(dataDirArg?: string): Promise<void> {
       }
     } else {
       ok("no workflow version drift among in-flight runs");
+    }
+
+    // Orphaned runs (P7.10): non-terminal runs idle > 5m — a likely lost
+    // wakeup or a stalled sweeper. Among the 1000 most recent runs.
+    const STUCK_MS = 5 * 60_000;
+    const stuck = inflight.filter((run) => run.updatedAt < Date.now() - STUCK_MS);
+    if (stuck.length > 0) {
+      warn(
+        `${stuck.length} run(s) idle >5m in a non-terminal state — orphaned (stuck or lost wakeups); inspect in the dashboard`,
+      );
+    } else {
+      ok("no orphaned runs");
     }
 
     const schedules = JSON.parse(await runtime.dashboardSchedules()) as Array<{

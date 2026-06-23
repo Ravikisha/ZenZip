@@ -7,6 +7,18 @@ import {
 } from "node:http";
 import type { Socket } from "node:net";
 
+import type { ZenzipApp } from "./app.js";
+import {
+  augmentRequest,
+  augmentResponse,
+  finalError,
+  runMiddleware,
+  type MiddlewareLayer,
+  type NextFunction,
+  type ZenRequest,
+  type ZenResponse,
+} from "./express.js";
+
 /** Request context handed to route handlers (P3.8). */
 export interface HttpContext<B = unknown> {
   method: string;
@@ -25,54 +37,118 @@ export interface HttpContext<B = unknown> {
   res: ServerResponse;
 }
 
-export type RouteHandler = (ctx: HttpContext) => unknown | Promise<unknown>;
+/** Single-arg handler: the typed runtime context (original ZenZip surface). */
+export type CtxHandler = (ctx: HttpContext) => unknown | Promise<unknown>;
 
-interface Route {
-  method: string;
-  segments: string[];
-  handler: RouteHandler;
+/**
+ * Express-familiar handler (P8.2): `(req, res)` or `(req, res, next)`. Detected
+ * by arity ≥ 2. Respond via `res.json()/send()/...`; calling `next()` falls
+ * through to a 404, `next(err)` enters the error middleware chain. A returned
+ * value (when nothing was sent) is JSON-encoded as a convenience.
+ */
+export type ExpressHandler = (
+  req: ZenRequest,
+  res: ZenResponse,
+  next: NextFunction,
+) => unknown | Promise<unknown>;
+
+/** A route handler in either supported shape (chosen at dispatch by arity). */
+export type RouteHandler = CtxHandler | ExpressHandler;
+
+/** A node in the per-method route trie (P10.8). */
+class RouteNode {
+  /** Static-segment children, keyed by the literal segment. */
+  children = new Map<string, RouteNode>();
+  /** Wildcard `:name` child (at most one per node); static children win. */
+  paramChild: RouteNode | null = null;
+  /** Param name captured when descending into paramChild. */
+  paramName: string | null = null;
+  /** Terminal handler for a path ending here (null = not a leaf). */
+  handler: RouteHandler | null = null;
 }
 
+/**
+ * Radix/trie router (P10.8) — O(path-depth) match instead of O(routes) linear
+ * scan, no per-request route-array allocation. One trie per HTTP method; static
+ * segments take priority over `:param` segments at each level. First registered
+ * handler wins on a conflict (no overwrite), preserving the old linear
+ * first-match semantics so user routes still override later built-ins
+ * (e.g. /healthz, /readyz registered after user routes).
+ */
 export class HttpRouter {
-  #routes: Route[] = [];
+  #trees = new Map<string, RouteNode>();
+  #size = 0;
 
+  add(method: string, path: string, handler: CtxHandler): void;
+  add(method: string, path: string, handler: ExpressHandler): void;
   add(method: string, path: string, handler: RouteHandler): void {
     if (!path.startsWith("/")) {
       throw new Error(`route path must start with "/": ${path}`);
     }
-    this.#routes.push({
-      method: method.toUpperCase(),
-      segments: path.split("/").filter(Boolean),
-      handler,
-    });
+    const m = method.toUpperCase();
+    let node = this.#trees.get(m);
+    if (!node) {
+      node = new RouteNode();
+      this.#trees.set(m, node);
+    }
+    for (const seg of path.split("/")) {
+      if (seg === "") continue;
+      if (seg.startsWith(":")) {
+        if (!node.paramChild) {
+          node.paramChild = new RouteNode();
+          node.paramName = seg.slice(1);
+        }
+        node = node.paramChild;
+      } else {
+        let child = node.children.get(seg);
+        if (!child) {
+          child = new RouteNode();
+          node.children.set(seg, child);
+        }
+        node = child;
+      }
+    }
+    if (node.handler === null) {
+      node.handler = handler; // first-match-wins
+      this.#size++;
+    }
   }
 
   match(
     method: string,
     path: string,
   ): { handler: RouteHandler; params: Record<string, string> } | null {
-    const parts = path.split("/").filter(Boolean);
-    for (const route of this.#routes) {
-      if (route.method !== method) continue;
-      if (route.segments.length !== parts.length) continue;
-      const params: Record<string, string> = {};
-      let ok = true;
-      for (let i = 0; i < parts.length; i++) {
-        const seg = route.segments[i];
-        if (seg.startsWith(":")) {
-          params[seg.slice(1)] = decodeURIComponent(parts[i]);
-        } else if (seg !== parts[i]) {
-          ok = false;
-          break;
-        }
+    const root = this.#trees.get(method);
+    if (!root) return null;
+    let node: RouteNode = root;
+    const params: Record<string, string> = {};
+    let start = 0;
+    const len = path.length;
+    // Walk segments by slicing between "/" boundaries — no array allocation.
+    while (start < len) {
+      if (path.charCodeAt(start) === 47 /* "/" */) {
+        start++;
+        continue;
       }
-      if (ok) return { handler: route.handler, params };
+      let end = path.indexOf("/", start);
+      if (end === -1) end = len;
+      const seg = path.slice(start, end);
+      const child = node.children.get(seg);
+      if (child) {
+        node = child;
+      } else if (node.paramChild) {
+        params[node.paramName as string] = decodeURIComponent(seg);
+        node = node.paramChild;
+      } else {
+        return null;
+      }
+      start = end + 1;
     }
-    return null;
+    return node.handler ? { handler: node.handler, params } : null;
   }
 
   get size(): number {
-    return this.#routes.length;
+    return this.#size;
   }
 }
 
@@ -91,79 +167,164 @@ export async function readJsonBody(req: IncomingMessage): Promise<unknown> {
   }
 }
 
+/** What makeNodeHandler/serveRouter need to serve requests. */
+export interface HandlerConfig {
+  router: HttpRouter;
+  /** Express-style middleware chain (P8.1). Runs before route dispatch. */
+  middleware?: MiddlewareLayer[];
+  /** Owning app, exposed as `req.app` to handlers/middleware. */
+  app?: ZenzipApp;
+}
+
+function toConfig(arg: HttpRouter | HandlerConfig): HandlerConfig {
+  return arg instanceof HttpRouter ? { router: arg } : arg;
+}
+
 /**
- * A plain node:http request handler over a router — mountable anywhere
- * (P3.9): `http.createServer(handler)`, Express `app.use(handler)`, or any
- * framework that exposes raw (req, res).
+ * Match a route and run its ctx handler against the already-augmented req/res.
+ * The body was parsed once during augmentation (the stream is consumed), so it
+ * is reused here rather than re-read. A handler throw/reject is forwarded to
+ * `onError` (the middleware error chain), not swallowed into a 500 directly.
  */
-export function makeNodeHandler(
+async function dispatchRoute(
   router: HttpRouter,
-): (req: IncomingMessage, res: ServerResponse) => void {
-  return async (req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    const matched = router.match(req.method ?? "GET", url.pathname);
-    if (!matched) {
+  req: ZenRequest,
+  res: ServerResponse,
+  onError: NextFunction,
+  url: URL,
+): Promise<void> {
+  const matched = router.match(req.method ?? "GET", req.path);
+  if (!matched) {
+    if (!res.headersSent) {
       res.writeHead(404, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "not found" }));
-      return;
     }
+    return;
+  }
+  req.params = matched.params;
+  const handler = matched.handler;
 
-    let statusCode = 200;
-    let responded = false;
-    const respond = (code: number, type: string, data: string) => {
-      if (responded || res.headersSent) return;
-      responded = true;
-      res.writeHead(code, { "content-type": type });
-      res.end(data);
+  // Express-familiar (req, res, next) handler — arity ≥ 2 (P8.2).
+  if (handler.length >= 2) {
+    const eres = res as ZenResponse;
+    let nexted = false;
+    const next: NextFunction = (err?: unknown) => {
+      nexted = true;
+      if (err !== undefined) {
+        onError(err);
+      } else if (!res.headersSent) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "not found" }));
+      }
     };
-
-    const ctx: HttpContext = {
-      method: req.method ?? "GET",
-      path: url.pathname,
-      params: matched.params,
-      query: url.searchParams,
-      body: await readJsonBody(req),
-      headers: req.headers,
-      status(code: number) {
-        statusCode = code;
-        return ctx;
-      },
-      json(data: unknown) {
-        respond(statusCode, "application/json", JSON.stringify(data));
-      },
-      text(data: string) {
-        respond(statusCode, "text/plain; charset=utf-8", data);
-      },
-      req,
-      res,
-    };
-
     try {
-      const result = await matched.handler(ctx);
-      // Streaming handlers (SSE) write to ctx.res directly — leave them be.
-      if (!responded && !res.headersSent) {
+      const result = await (handler as ExpressHandler)(req, eres, next);
+      if (!res.headersSent && !nexted) {
         if (result === undefined) {
-          respond(statusCode === 200 ? 204 : statusCode, "application/json", "");
+          res.statusCode = res.statusCode === 200 ? 204 : res.statusCode;
+          res.end();
         } else {
-          respond(statusCode, "application/json", JSON.stringify(result));
+          eres.json(result);
         }
       }
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      respond(500, "application/json", JSON.stringify({ error: message }));
+      onError(e);
     }
+    return;
+  }
+
+  let statusCode = res.statusCode && res.statusCode !== 200 ? res.statusCode : 200;
+  let responded = false;
+  const respond = (code: number, type: string, data: string) => {
+    if (responded || res.headersSent) return;
+    responded = true;
+    res.writeHead(code, { "content-type": type });
+    res.end(data);
+  };
+
+  const ctx: HttpContext = {
+    method: req.method ?? "GET",
+    path: req.path,
+    params: matched.params,
+    query: url.searchParams, // reuse the URL already parsed in makeNodeHandler
+    body: req.body,
+    headers: req.headers,
+    status(code: number) {
+      statusCode = code;
+      return ctx;
+    },
+    json(data: unknown) {
+      respond(statusCode, "application/json", JSON.stringify(data));
+    },
+    text(data: string) {
+      respond(statusCode, "text/plain; charset=utf-8", data);
+    },
+    req,
+    res,
+  };
+
+  try {
+    const result = await (handler as CtxHandler)(ctx);
+    // Streaming/Express handlers (SSE, res.json) write to res directly — leave
+    // them be once anything was sent.
+    if (!responded && !res.headersSent) {
+      if (result === undefined) {
+        respond(statusCode === 200 ? 204 : statusCode, "application/json", "");
+      } else {
+        respond(statusCode, "application/json", JSON.stringify(result));
+      }
+    }
+  } catch (e) {
+    onError(e);
+  }
+}
+
+/**
+ * A plain node:http request handler — mountable anywhere (P3.9):
+ * `http.createServer(handler)`, Express `app.use(handler)`, or any framework
+ * that exposes raw (req, res). Accepts a bare router (back-compat) or a full
+ * HandlerConfig with the Express middleware chain (P8.1).
+ */
+export function makeNodeHandler(
+  arg: HttpRouter | HandlerConfig,
+): (req: IncomingMessage, res: ServerResponse) => void {
+  const { router, middleware = [], app } = toConfig(arg);
+  return async (rawReq, rawRes) => {
+    const url = new URL(rawReq.url ?? "/", "http://localhost");
+    const req = augmentRequest(rawReq, url, app as ZenzipApp);
+    const res = augmentResponse(rawRes);
+    // Parse the body once, up front — middleware and the route handler share
+    // it; the request stream can only be consumed once. Skip the read entirely
+    // for methods that carry no body (GET/HEAD/OPTIONS) and for bodies declared
+    // empty — `for await (const chunk of req)` otherwise forces an extra
+    // event-loop turn on every body-less request (the dominant GET overhead).
+    const method = rawReq.method ?? "GET";
+    const mayHaveBody =
+      method !== "GET" &&
+      method !== "HEAD" &&
+      method !== "OPTIONS" &&
+      rawReq.headers["content-length"] !== "0";
+    req.body = mayHaveBody ? await readJsonBody(rawReq) : undefined;
+
+    if (middleware.length === 0) {
+      await dispatchRoute(router, req, res, (e) => finalError(e, res), url);
+      return;
+    }
+    runMiddleware(middleware, req, res, (onError) => {
+      void dispatchRoute(router, req, res, onError, url);
+    });
   };
 }
 
 const serverSockets = new WeakMap<Server, Set<Socket>>();
 
-/** Serve a router on node:http. Returns the listening server. */
+/** Serve a router (or full handler config) on node:http. */
 export function serveRouter(
-  router: HttpRouter,
+  arg: HttpRouter | HandlerConfig,
   port: number,
   host: string,
 ): Promise<Server> {
-  const server = createServer(makeNodeHandler(router));
+  const server = createServer(makeNodeHandler(arg));
   // Track live sockets so closeServer() can terminate long-lived
   // connections (SSE streams, keep-alive) instead of waiting forever.
   const sockets = new Set<Socket>();
@@ -179,14 +340,38 @@ export function serveRouter(
 }
 
 /**
- * Close a server created by serveRouter, destroying open connections —
- * server.close() alone never resolves while an SSE response is streaming.
+ * Graceful HTTP drain (P15.3): stop accepting new connections, free idle
+ * keep-alive sockets immediately, let in-flight requests finish for up to
+ * `drainMs`, then force-close any stragglers (e.g. SSE streams that never end).
+ * The other half of zero-downtime deploys (the queue drain in app.stop is the
+ * first half). Resolves as soon as connections are gone or the deadline hits.
  */
-export function closeServer(server: Server): Promise<void> {
+export function closeServer(server: Server, drainMs = 5_000): Promise<void> {
+  type Closable = Server & {
+    closeIdleConnections?: () => void;
+    closeAllConnections?: () => void;
+  };
+  const s = server as Closable;
   return new Promise((resolve) => {
-    for (const socket of serverSockets.get(server) ?? []) {
-      socket.destroy();
-    }
-    server.close(() => resolve());
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+    server.close(() => done()); // resolves once all connections have ended
+    // Idle keep-alive sockets would otherwise hold close() open — free them now.
+    s.closeIdleConnections?.();
+    const timer = setTimeout(() => {
+      // Force-close whatever is left (in-flight past the deadline, SSE, …).
+      if (s.closeAllConnections) {
+        s.closeAllConnections();
+      } else {
+        for (const socket of serverSockets.get(server) ?? []) socket.destroy();
+      }
+      done();
+    }, drainMs);
+    if (typeof timer.unref === "function") timer.unref();
   });
 }

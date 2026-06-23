@@ -1,4 +1,5 @@
 import type { Duration } from "./duration.js";
+import type { BlobStore } from "./payload.js";
 
 export interface LogEvent {
   /** ERROR | WARN | INFO | DEBUG | TRACE */
@@ -17,7 +18,7 @@ export type StoreConfig =
 export interface ZenzipOptions {
   /** Directory for the embedded store. Default: ".zenzip" */
   dataDir?: string;
-  /** Storage backend. Default: { driver: "sqlite" }. Postgres lands in Phase 5. */
+  /** Storage backend. Default: { driver: "sqlite" }. Use postgres for multi-node. */
   store?: StoreConfig;
   /** Install SIGINT/SIGTERM handlers that gracefully stop the app. Default: true */
   handleSignals?: boolean;
@@ -36,6 +37,108 @@ export interface ZenzipOptions {
   logLevel?: "error" | "warn" | "info" | "debug" | "trace" | "off";
   /** Receive runtime log events. Default sink (when only logLevel set): stderr. */
   logger?: (event: LogEvent) => void;
+  /**
+   * Audit sink (P13.6): called for privileged actions (workflow trigger /
+   * cancel, dead-letter requeue, agent approve/deny). Wire it to an append-only
+   * store for a queryable audit trail. Fire-and-forget; throwing is swallowed.
+   */
+  onAudit?: (entry: AuditEntry) => void;
+  /**
+   * Retention / GC (P7.6). A background sweep deletes aged terminal runs
+   * (with their step journal) and old events so the store doesn't grow
+   * unbounded. Defaults: keep 7 days of runs + events, sweep hourly. Set a
+   * window to `"off"` to keep that category forever.
+   */
+  retention?: {
+    /** Drop COMPLETED/FAILED/CANCELLED runs older than this. Default: "7d". */
+    runs?: Duration | "off";
+    /** Drop events older than this. Default: "7d". */
+    events?: Duration | "off";
+    /** GC sweep cadence. Default: "1h". */
+    sweep?: Duration;
+  };
+  /**
+   * Large LLM payload offloading (P9.1), opt-in. Step results larger than
+   * `threshold` bytes are written to a blob store and replaced in the journal
+   * by a reference, keeping the run/step tables lean. Transparent — replay
+   * rehydrates the real value. The default store is the local filesystem
+   * (`<dataDir>/blobs`); a multi-node (postgres) deploy MUST supply a shared
+   * `store` so any node can read another node's blob.
+   */
+  payloads?: {
+    /** Offload threshold in bytes. Default: 65536 (64 KiB). */
+    threshold?: number;
+    /** Blob backend. Default: filesystem under the data dir. */
+    store?: BlobStore;
+  };
+}
+
+/** Rows removed by a retention GC pass (P7.6). */
+export interface GcStats {
+  runs: number;
+  steps: number;
+  events: number;
+}
+
+/** Health probe result (P7.7). */
+export interface HealthStatus {
+  /** Process is up and the engine is responding. */
+  alive: boolean;
+  /** Started AND the store is reachable — safe to route traffic. */
+  ready: boolean;
+}
+
+/** One step's state in a run update (P9.4). */
+export interface StepUpdate {
+  stepId: string;
+  kind: string;
+  /** 0 = running/in-progress, 1 = completed (store step status). */
+  status: number;
+  attempts: number;
+  error?: string;
+}
+
+/** A snapshot emitted by app.subscribe() as a run progresses (P9.4). */
+export interface RunUpdate<O = unknown> {
+  runId: string;
+  workflow: string;
+  status: "running" | "sleeping" | "waitingEvent" | "waitingChild" | "completed" | "failed" | "cancelled";
+  /** True once status is completed / failed / cancelled. */
+  terminal: boolean;
+  output?: O;
+  error?: string;
+  steps: StepUpdate[];
+}
+
+/** Options for app.subscribe() (P9.4). */
+export interface SubscribeOptions {
+  /** Poll cadence in ms. Default: 250. */
+  interval?: number;
+  /** Give up after this long if the run never terminates (ms). Default: none. */
+  timeout?: number;
+}
+
+/** A non-terminal run that has stopped making progress (P7.10). */
+export interface OrphanedRun {
+  runId: string;
+  workflow: string;
+  status: "running" | "sleeping" | "waitingEvent" | "waitingChild";
+  /** How long since the run last changed (ms). */
+  idleMs: number;
+  /** Why it looks stuck — a likely lost wakeup or stalled sweep. */
+  reason: string;
+}
+
+/** A privileged action recorded for the audit trail (P13.6). */
+export interface AuditEntry {
+  /** e.g. "workflow.trigger", "workflow.cancel", "queue.requeueDead", "agent.approve". */
+  action: string;
+  /** What it acted on (workflow/queue/agent name or run id). */
+  target?: string;
+  /** Epoch ms. */
+  at: number;
+  /** Action-specific extra context (run id, counts, …). */
+  detail?: Record<string, unknown>;
 }
 
 /** Minimal Standard Schema v1 interface (zod 3.24+, valibot, arktype...). */
@@ -56,8 +159,12 @@ export interface StandardSchemaV1<Output = unknown> {
 }
 
 export interface QueueOptions<T = unknown> {
-  /** Max handler invocations in flight. Default: 10 */
-  concurrency?: number;
+  /**
+   * Concurrency limit. A number caps total in-flight handlers (default 10).
+   * The object form (P10.1) caps in-flight *per key* — `{ limit, key }` runs at
+   * most `limit` jobs that share `key(data)` at once (e.g. per user/tenant).
+   */
+  concurrency?: number | { limit: number; key: (data: T) => string };
   /** Retries after the first failed attempt (maxAttempts = retries + 1). Default: 2 */
   retries?: number;
   /** Exponential backoff between retries. Default: { delay: "1s", maxDelay: "60s" } */
@@ -70,6 +177,30 @@ export interface QueueOptions<T = unknown> {
   batch?: number;
   /** Token-bucket rate limit: at most `max` jobs started per `per` window. */
   rateLimit?: { max: number; per: Duration };
+  /**
+   * Debounce (P10.2): collapse rapid pushes that share `key(data)` — each push
+   * cancels the prior pending one and (re)schedules `window` out, so only the
+   * last push in a burst runs, once the burst is quiet for `window`.
+   */
+  debounce?: { key: (data: T) => string; window: Duration };
+  /**
+   * Throttle (P10.2): smooth starts to at most `max` per `per` window *per
+   * key* by spacing each pushed job after the key's last scheduled one. Unlike
+   * debounce (which drops), throttle spreads — every job runs, rate-paced.
+   */
+  throttle?: { key: (data: T) => string; max: number; per: Duration };
+  /**
+   * Backpressure / admission control (P7.8): reject pushes once this many
+   * jobs are already pending, with a QueueFullError. Best-effort (concurrent
+   * producers may overshoot slightly) — bounds runaway growth when consumers
+   * fall behind. Omit for an unbounded queue (the default).
+   */
+  maxPending?: number;
+  /**
+   * Fairness (P10.3): round-robin claims across the `concurrency.key` groups so
+   * one tenant/key can't starve others. Requires a keyed `concurrency`.
+   */
+  fair?: boolean;
   /** Validated on push when provided. */
   schema?: StandardSchemaV1<T>;
 }
@@ -173,4 +304,10 @@ export type ScheduleHandler = (tick: ScheduleTick) => void | Promise<void>;
 export interface StopOptions {
   /** Max time to wait for in-flight jobs to drain. Default: 30s */
   timeout?: Duration;
+  /**
+   * Max time to let in-flight HTTP requests finish before force-closing
+   * connections (P15.3). Idle keep-alive sockets are freed immediately;
+   * long-lived streams (SSE) are force-closed at this deadline. Default: 5s.
+   */
+  httpDrain?: Duration;
 }

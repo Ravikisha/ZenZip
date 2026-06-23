@@ -8,11 +8,20 @@ export interface DashboardOptions {
   port?: number;
   host?: string;
   /**
-   * When set, every request must carry the token (`Authorization: Bearer …`
-   * or `?token=`). Without it the dashboard is open — keep it on 127.0.0.1.
+   * Operator token — full access incl. mutations (requeue dead, etc). Carry
+   * it as `Authorization: Bearer …` or `?token=`. Without any token the
+   * dashboard is open — keep it on 127.0.0.1.
    */
   token?: string;
+  /**
+   * Read-only token (P7.17 RBAC): grants GET access to all views but is
+   * rejected (403) on mutating endpoints. Hand this to people who should
+   * watch but not operate.
+   */
+  viewerToken?: string;
 }
+
+type Role = "operator" | "viewer";
 
 function tokenMatches(expected: string, provided: string | undefined): boolean {
   if (!provided) return false;
@@ -28,16 +37,32 @@ export async function startDashboard(
 ): Promise<Server> {
   const router = new HttpRouter();
   const native = () => app._native;
-  const token = options.token;
+  const operatorToken = options.token;
+  const viewerToken = options.viewerToken;
+  const authEnabled = Boolean(operatorToken || viewerToken);
 
-  const authorized = (ctx: HttpContext): boolean => {
-    if (!token) return true;
+  const roleOf = (ctx: HttpContext): Role | null => {
+    if (!authEnabled) return "operator"; // open dashboard (back-compat)
     const header = ctx.headers.authorization;
     const bearer = header?.startsWith("Bearer ") ? header.slice(7) : undefined;
     const provided = bearer ?? ctx.query.get("token") ?? undefined;
-    if (tokenMatches(token, provided)) return true;
-    ctx.status(401).json({ error: "unauthorized" });
-    return false;
+    if (operatorToken && tokenMatches(operatorToken, provided)) return "operator";
+    if (viewerToken && tokenMatches(viewerToken, provided)) return "viewer";
+    return null;
+  };
+
+  /** Gate a request. `need: "write"` requires the operator role. */
+  const authorized = (ctx: HttpContext, need: "read" | "write" = "read"): boolean => {
+    const role = roleOf(ctx);
+    if (!role) {
+      ctx.status(401).json({ error: "unauthorized" });
+      return false;
+    }
+    if (need === "write" && role !== "operator") {
+      ctx.status(403).json({ error: "forbidden: operator role required" });
+      return false;
+    }
+    return true;
   };
 
   const overview = async () => {
@@ -117,7 +142,7 @@ export async function startDashboard(
   });
 
   router.add("POST", "/api/queues/:name/requeue-dead", async (ctx) => {
-    if (!authorized(ctx)) return;
+    if (!authorized(ctx, "write")) return;
     const dead = JSON.parse(await native().deadJobs(ctx.params.name, 1000)) as Array<{
       id: string;
     }>;

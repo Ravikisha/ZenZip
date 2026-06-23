@@ -9,6 +9,18 @@ import type {
   QueueOptions,
 } from "./types.js";
 
+/** Thrown by push/pushBulk when a queue's `maxPending` bound is reached (P7.8). */
+export class QueueFullError extends Error {
+  constructor(
+    readonly queue: string,
+    readonly pending: number,
+    readonly maxPending: number,
+  ) {
+    super(`queue "${queue}" is full: ${pending} pending ≥ maxPending ${maxPending}`);
+    this.name = "QueueFullError";
+  }
+}
+
 export class Queue<T = unknown> {
   /** @internal */
   _handler: JobHandler<T> | undefined;
@@ -69,12 +81,41 @@ export class Queue<T = unknown> {
 
   async push(data: T, options: PushOptions = {}): Promise<string> {
     const payload = await this.#validate(data);
-    return this.app._native.push(this.name, payload, this.#pushOptions(options));
+    await this.#admit(1);
+    return this.app._native.push(this.name, payload, this.#pushOptions(options, data));
   }
 
   async pushBulk(items: T[], options: PushOptions = {}): Promise<string[]> {
+    // Per-key concurrency (P10.1) / debounce (P10.2) need a key per item; the
+    // bulk native call takes one option set, so fall back to per-item pushes.
+    if (this.#keyFn() || this.options.debounce || this.options.throttle) {
+      const ids: string[] = [];
+      for (const d of items) ids.push(await this.push(d, options));
+      return ids;
+    }
     const payloads = await Promise.all(items.map((d) => this.#validate(d)));
+    await this.#admit(payloads.length);
     return this.app._native.pushBulk(this.name, payloads, this.#pushOptions(options));
+  }
+
+  #keyFn(): ((data: T) => string) | undefined {
+    const c = this.options.concurrency;
+    return typeof c === "object" ? c.key : undefined;
+  }
+
+  #keyFor(data: T): string | undefined {
+    const fn = this.#keyFn();
+    return fn ? String(fn(data)) : undefined;
+  }
+
+  /** Backpressure gate (P7.8): throw QueueFullError if maxPending is reached. */
+  async #admit(incoming: number): Promise<void> {
+    const max = this.options.maxPending;
+    if (max === undefined) return;
+    const pending = await this.pendingCount();
+    if (pending + incoming > max) {
+      throw new QueueFullError(this.name, pending, max);
+    }
   }
 
   async pendingCount(): Promise<number> {
@@ -108,15 +149,56 @@ export class Queue<T = unknown> {
   async requeueDead(ids?: string[]): Promise<number> {
     const target = ids ?? (await this.deadJobs()).map((j) => j.id);
     if (target.length === 0) return 0;
-    return this.app._native.requeueDead(target);
+    const n = await this.app._native.requeueDead(target);
+    this.app._audit("queue.requeueDead", this.name, { count: n });
+    return n;
   }
 
-  #pushOptions(options: PushOptions) {
+  /** Permanently delete all dead-lettered jobs for this queue (P14.1). */
+  async purgeDead(): Promise<number> {
+    const n = await this.app._native.purgeDead(this.name);
+    this.app._audit("queue.purgeDead", this.name, { count: n });
+    return n;
+  }
+
+  /**
+   * Pause this queue (P14.1): stop claiming new jobs; in-flight jobs finish.
+   * In-process (this node) — call on each node for a cluster-wide pause.
+   */
+  pause(): void {
+    this.app._native.pauseQueue(this.name);
+    this.app._audit("queue.pause", this.name);
+  }
+
+  /** Resume a paused queue and wake its dispatcher. */
+  resume(): void {
+    this.app._native.resumeQueue(this.name);
+    this.app._audit("queue.resume", this.name);
+  }
+
+  isPaused(): boolean {
+    return this.app._native.isQueuePaused(this.name);
+  }
+
+  #pushOptions(options: PushOptions, data?: T) {
     const retries = options.retries ?? this.options.retries ?? this.app._defaultRetries();
+    const deb = this.options.debounce;
+    // A debounce window is the job's delay; otherwise honor an explicit delay.
+    const delayMs = deb
+      ? ms(deb.window)
+      : options.delay !== undefined
+        ? ms(options.delay)
+        : undefined;
+    const thr = this.options.throttle;
     return {
-      delayMs: options.delay !== undefined ? ms(options.delay) : undefined,
+      delayMs,
       priority: options.priority,
       maxAttempts: retries + 1,
+      concurrencyKey: data !== undefined ? this.#keyFor(data) : undefined,
+      debounceKey: deb && data !== undefined ? String(deb.key(data)) : undefined,
+      throttleKey: thr && data !== undefined ? String(thr.key(data)) : undefined,
+      throttleSpacingMs:
+        thr && data !== undefined ? Math.max(1, Math.round(ms(thr.per) / Math.max(1, thr.max))) : undefined,
     };
   }
 

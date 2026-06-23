@@ -16,6 +16,7 @@ import {
   type LlmToolDef,
   type LlmUsage,
 } from "./llm/types.js";
+import { costOf } from "./llm/pricing.js";
 import type { Step, Workflow } from "./workflow.js";
 import type { StandardSchemaV1 } from "./types.js";
 import type { ZenzipApp } from "./app.js";
@@ -126,6 +127,8 @@ export interface AgentResult {
   /** Parsed + validated only when `output` schema is set. */
   output?: unknown;
   usage: LlmUsage & { totalTokens: number };
+  /** Estimated USD cost from per-model pricing (P9.7); undefined if unpriced. */
+  costUsd?: number;
   iterations: number;
   toolCalls: number;
 }
@@ -199,10 +202,12 @@ export class Agent<TOutput = unknown> {
   /** Resolve a pending approval gate (P4.9). */
   approve(runId: string, toolUseId: string): void {
     this.#app.emit(APPROVAL_EVENT, { runId, toolUseId, approved: true });
+    this.#app._audit("agent.approve", this.name, { runId, toolUseId });
   }
 
   deny(runId: string, toolUseId: string, reason?: string): void {
     this.#app.emit(APPROVAL_EVENT, { runId, toolUseId, approved: false, reason });
+    this.#app._audit("agent.deny", this.name, { runId, toolUseId, reason });
   }
 
   /** Stored conversation for a session (P4.7). */
@@ -447,10 +452,12 @@ async function runAgentLoop(
     });
   }
 
+  const costUsd = costOf(options.model, usage);
   return {
     text: finalText,
     ...(options.output ? { output } : {}),
     usage: { ...usage, totalTokens: usage.inputTokens + usage.outputTokens },
+    ...(costUsd !== undefined ? { costUsd } : {}),
     iterations,
     toolCalls,
   };
