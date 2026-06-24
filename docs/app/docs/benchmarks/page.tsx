@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { CodeBlock } from "@/components/code-block";
 import { DocPage } from "@/components/docs/doc-page";
 import {
+  A,
   Callout,
   Code,
   H2,
@@ -20,7 +21,9 @@ const toc = [
   { id: "boundary", title: "JS ↔ Rust boundary" },
   { id: "tsfn", title: "Handler dispatch" },
   { id: "http", title: "The HTTP no-go" },
+  { id: "compare", title: "vs Express & Fastify" },
   { id: "sqlite", title: "SQLite throughput" },
+  { id: "pg-scale", title: "Postgres at scale" },
   { id: "method", title: "Methodology notes" },
 ];
 
@@ -139,6 +142,84 @@ export default function Page() {
         </LI>
       </UL>
 
+      <H2 id="compare">Feature-for-feature: vs Express &amp; Fastify (P10.5)</H2>
+      <P>
+        Phase 0 killed the Rust HTTP server — ZenZip&apos;s HTTP is a thin{" "}
+        <Code>node:http</Code> adapter, not a speed play. So the fair question
+        isn&apos;t &ldquo;is it the fastest router&rdquo; but &ldquo;what does
+        the adapter cost you against the two frameworks people actually
+        migrate from?&rdquo; Identical handlers, same machine, load gen in a
+        child process, best-of 3 interleaved rounds:
+      </P>
+      <Table
+        head={["Scenario", "Express 5", "Fastify", "ZenZip", "vs Express", "vs Fastify"]}
+        rows={[
+          [<Code key="t">GET /</Code>, "6,344", "17,554", <Strong key="tz">15,749</Strong>, "2.48×", "0.90×"],
+          [<Code key="j">GET /json</Code>, "6,144", "16,527", <Strong key="jz">15,002</Strong>, "2.44×", "0.91×"],
+          [<Code key="p">GET /users/:id</Code>, "5,977", "16,600", <Strong key="pz">16,216</Strong>, "2.71×", "0.98×"],
+          [
+            <Code key="e">POST /echo</Code>,
+            "4,724",
+            "8,787",
+            <Strong key="ez">8,441</Strong>,
+            "1.79×",
+            "0.96×",
+          ],
+          [<Code key="m">GET /mw + CORS</Code>, "6,266", "16,615", <Strong key="mz">13,932</Strong>, "2.22×", "0.84×"],
+        ]}
+      />
+      <P>
+        Numbers are req/s, best-of. Read-out:
+      </P>
+      <UL>
+        <LI>
+          <Strong>ZenZip is 1.8–2.7× Express on every scenario</Strong> and
+          now within <Strong>0.84–0.98× of Fastify</Strong> — effectively even
+          on routing and param extraction (0.98×), a hair behind on the
+          middleware chain.
+        </LI>
+        <LI>
+          <Strong>What closed the early gap (P10.7):</Strong> the adapter used
+          to parse the request body on <em>every</em> request, so a body-less
+          GET still paid for an <Code>await</Code> over the request stream (an
+          extra event-loop turn each). Skipping the read for GET/HEAD/OPTIONS
+          and declared-empty bodies, plus reusing the parsed URL instead of
+          re-parsing it for <Code>ctx.query</Code>, lifted GET throughput
+          50–130%.
+        </LI>
+        <LI>
+          <Strong>The router is now a radix trie (P10.8)</Strong> — O(path
+          depth) match with no per-request route-array allocation, replacing
+          the old linear scan. On this 5-route microbench it&apos;s within
+          noise of the linear version; the win grows with route count, and it
+          closed the routing/param scenarios to ~1.0× Fastify.
+        </LI>
+        <LI>
+          <Strong>What we tried and reverted:</Strong> swapping each
+          request/response onto a shared prototype (Fastify&apos;s trick) to
+          kill per-request closure allocation. Measured: it{" "}
+          <em>halved</em> GET throughput. Per-request{" "}
+          <Code>Object.setPrototypeOf</Code> is a V8 deopt that costs far more
+          than the closures it removes. Plain closures stay — a benchmark
+          killing our own &ldquo;optimization&rdquo; is the point of measuring.
+          See <A href="/docs/roadmap">the roadmap</A>.
+        </LI>
+        <LI>
+          <Strong>Takeaway:</Strong> the HTTP layer is on par with Fastify and
+          far ahead of Express — but you don&apos;t adopt ZenZip for router
+          req/s, you adopt it for durable queues, workflows, and agents Express
+          and Fastify don&apos;t have. The adapter being this competitive means
+          migrating costs you nothing on the request path.
+        </LI>
+      </UL>
+      <CodeBlock
+        code={`# reproduce — all three frameworks, identical handlers
+cd bench && node compare.mjs
+DURATION=5 ROUNDS=3 CONNECTIONS=64 node compare.mjs`}
+        lang="bash"
+        className="mt-6"
+      />
+
       <H2 id="sqlite">SQLite throughput (P0.7)</H2>
       <Table
         head={["Operation", "Throughput"]}
@@ -157,6 +238,51 @@ export default function Page() {
         for the multi-node story, not for throughput.
       </P>
 
+      <H2 id="pg-scale">Postgres at scale (P10.4)</H2>
+      <P>
+        Two changes lift the multi-node scale ceiling, both measured against a
+        live Postgres rather than asserted:
+      </P>
+      <UL>
+        <LI>
+          <Strong>Partitioned event outbox.</Strong> The <Code>events</Code>{" "}
+          table is RANGE-partitioned by <Code>emitted_at</Code> into fixed
+          one-day buckets. Retention GC (P7.6) now <Strong>drops a whole aged
+          partition</Strong> — an instant <Code>DROP TABLE</Code> — instead of
+          a row-by-row <Code>DELETE</Code> that scans and bloats at scale; a
+          DEFAULT partition catches any un-bucketed row so correctness never
+          depends on partition upkeep. Per-partition indexes also stay small.
+          The current and next partitions are pre-created at startup and before
+          each sweep.
+        </LI>
+        <LI>
+          <Strong>Priority-ordered dequeue index.</Strong> A partial index{" "}
+          <Code>(queue, priority DESC, id) WHERE status = 0</Code> lets the
+          claim walk ready jobs in dispatch order and stop at the batch{" "}
+          <Code>LIMIT</Code> — no sort. <Code>EXPLAIN ANALYZE</Code> on an
+          80,000-row queue:
+        </LI>
+      </UL>
+      <Table
+        head={["Claim of 32 jobs (80k-row queue)", "Plan", "Time"]}
+        rows={[
+          ["Before", "Bitmap scan of 20k rows → Sort (priority, id)", "53.5 ms"],
+          [
+            "After",
+            <span key="a">
+              Index Scan on <Code>idx_jobs_ready</Code>, no sort
+            </span>,
+            <Strong key="b">0.83 ms</Strong>,
+          ],
+        ]}
+      />
+      <P>
+        ~60× on the hot claim path once a queue&apos;s backlog is deep enough to
+        matter. Both changes are Postgres-only — the embedded SQLite path is
+        single-node and already fast (above); partitioning exists for the
+        multi-node scale story, exactly like Postgres itself.
+      </P>
+
       <H2 id="method">Methodology notes</H2>
       <UL>
         <LI>
@@ -173,7 +299,7 @@ export default function Page() {
         <LI>
           <Strong>Reproducible.</Strong> Every benchmark lives in{" "}
           <Code>bench/</Code> in the repo:{" "}
-          <Code>pnpm bench:boundary · bench:tsfn · bench:http · bench:sqlite</Code>.
+          <Code>pnpm bench:boundary · bench:tsfn · bench:http · bench:sqlite · bench:compare</Code>.
         </LI>
       </UL>
     </DocPage>

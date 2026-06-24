@@ -11,9 +11,11 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+use zenzip_core::postgres::PgStore;
 use zenzip_core::queue::{Handler, QueueConfig};
 use zenzip_core::runtime::{CoreRuntime, RuntimeConfig};
-use zenzip_core::store::run_status;
+use zenzip_core::store::{run_status, PushJob, Store};
+use zenzip_core::time::now_ms;
 use zenzip_core::workflow::{ExecRequest, Executor, WorkflowConfig};
 
 fn pg_url() -> String {
@@ -108,6 +110,10 @@ async fn pg_two_nodes_share_a_queue_without_duplicates() {
             priority: 0,
             delay_ms: 0,
             max_attempts: 3,
+            concurrency_key: None,
+            debounce_key: None,
+            throttle_key: None,
+            throttle_spacing_ms: None,
         })
         .collect();
     a.push(jobs).unwrap();
@@ -162,6 +168,10 @@ async fn pg_three_node_chaos_kills_a_node_without_losing_jobs() {
             priority: 0,
             delay_ms: 0,
             max_attempts: 5,
+            concurrency_key: None,
+            debounce_key: None,
+            throttle_key: None,
+            throttle_spacing_ms: None,
         })
         .collect();
     nodes[0].push(jobs).unwrap();
@@ -380,4 +390,190 @@ async fn pg_event_emitted_on_one_node_wakes_a_run_on_another() {
 
     a.stop(Duration::from_secs(5)).await.unwrap();
     b.stop(Duration::from_secs(5)).await.unwrap();
+}
+
+fn pjob(queue: &str, payload: &str, ck: Option<&str>, dk: Option<&str>) -> PushJob {
+    PushJob {
+        queue: queue.into(),
+        payload: payload.into(),
+        priority: 0,
+        delay_ms: 0,
+        max_attempts: 3,
+        concurrency_key: ck.map(Into::into),
+        debounce_key: dk.map(Into::into),
+        throttle_key: None,
+        throttle_spacing_ms: None,
+    }
+}
+
+/// P7.12: lease expiry uses Postgres server time, not the (possibly skewed)
+/// sweeper's wall clock. A sweeper whose clock is an hour fast must NOT
+/// prematurely expire a freshly-claimed, still-valid lease.
+#[tokio::test(flavor = "multi_thread")]
+async fn pg_lease_expiry_ignores_skewed_caller_clock() {
+    let Some(_guard) = pg_guard().await else {
+        return;
+    };
+    let store = PgStore::open(tokio::runtime::Handle::current(), &pg_url()).expect("open pg store");
+
+    store.push(vec![pjob("sk", "j0", None, None)]).await.unwrap();
+    let claimed = store.claim("sk", 1, 30_000, None, false).await.unwrap();
+    assert_eq!(claimed.len(), 1); // 30s lease, set from DB time
+
+    // Sweeper clock skewed +1h ahead. Pre-P7.12 this would expire the lease;
+    // with DB-time comparison it does not.
+    let skewed = now_ms() + 3_600_000;
+    let swept = store.sweep_expired(skewed).await.unwrap();
+    assert_eq!(swept, 0, "skewed sweeper clock must not expire a valid lease");
+    // Still leased → not reclaimable.
+    assert!(store.claim("sk", 1, 30_000, None, false).await.unwrap().is_empty());
+
+    store.close_blocking();
+}
+
+/// Validate the Postgres windowed-claim variants (advisory-lock path) +
+/// debounce collapse + bulk purge against a real server (P10.1/P10.2/P10.3/P14.1).
+#[tokio::test(flavor = "multi_thread")]
+async fn pg_flow_control_keyed_fair_debounce_purge() {
+    let Some(_guard) = pg_guard().await else {
+        return;
+    };
+    let store = PgStore::open(tokio::runtime::Handle::current(), &pg_url()).expect("open pg store");
+
+    // Per-key concurrency (P10.1): limit 1 → one "a" + one "b" claimed.
+    store
+        .push(vec![
+            pjob("kq", "a0", Some("a"), None),
+            pjob("kq", "a1", Some("a"), None),
+            pjob("kq", "b0", Some("b"), None),
+        ])
+        .await
+        .unwrap();
+    let keyed = store.claim("kq", 10, 30_000, Some(1), false).await.unwrap();
+    assert_eq!(keyed.iter().filter(|j| j.payload.starts_with('a')).count(), 1);
+    assert_eq!(keyed.iter().filter(|j| j.payload.starts_with('b')).count(), 1);
+
+    // Fairness (P10.3): claim 2 round-robins one per key, not two "a"s.
+    store
+        .push(vec![
+            pjob("fq", "fa0", Some("a"), None),
+            pjob("fq", "fa1", Some("a"), None),
+            pjob("fq", "fa2", Some("a"), None),
+            pjob("fq", "fb0", Some("b"), None),
+        ])
+        .await
+        .unwrap();
+    let fair = store.claim("fq", 2, 30_000, None, true).await.unwrap();
+    assert_eq!(fair.len(), 2);
+    assert_eq!(fair.iter().filter(|j| j.payload.starts_with("fa")).count(), 1);
+    assert_eq!(fair.iter().filter(|j| j.payload.starts_with("fb")).count(), 1);
+
+    // Debounce (P10.2): three rapid same-key pushes collapse to one pending.
+    for i in 0..3 {
+        store
+            .push(vec![pjob("dq", &format!("d{i}"), None, Some("k"))])
+            .await
+            .unwrap();
+    }
+    assert_eq!(store.pending_count("dq").await.unwrap(), 1);
+
+    // Throttle (P10.2): 60s spacing → only the first slot is claimable now.
+    for i in 0..3 {
+        let mut j = pjob("tq", &format!("t{i}"), None, None);
+        j.throttle_key = Some("k".into());
+        j.throttle_spacing_ms = Some(60_000);
+        store.push(vec![j]).await.unwrap();
+    }
+    let throttled = store.claim("tq", 10, 30_000, None, false).await.unwrap();
+    assert_eq!(throttled.len(), 1, "throttle spaces starts; only 1 ready now");
+    assert_eq!(store.pending_count("tq").await.unwrap(), 2);
+
+    // Bulk DLQ purge (P14.1).
+    store.push(vec![pjob("pq", "x", None, None)]).await.unwrap();
+    let c = store.claim("pq", 1, 30_000, None, false).await.unwrap();
+    store.fail_dead(&c[0].id, "boom", c[0].fence).await.unwrap();
+    assert_eq!(store.purge_dead("pq").await.unwrap(), 1);
+    assert!(store.dead_jobs("pq", 10).await.unwrap().is_empty());
+
+    store.close_blocking();
+}
+
+/// Event-outbox partitioning + retention DROP (P10.4): open() pre-creates the
+/// current/next time partitions; GC reclaims a fully-aged partition by dropping
+/// the whole table (not a row delete), and leaves the live event untouched.
+#[tokio::test(flavor = "multi_thread")]
+async fn pg_event_partition_dropped_by_gc() {
+    let Some(_guard) = pg_guard().await else {
+        return;
+    };
+    let store = PgStore::open(tokio::runtime::Handle::current(), &pg_url()).expect("open pg store");
+
+    const W: i64 = 86_400_000; // EVENT_PARTITION_MS (one day)
+    let now = now_ms();
+    let k0 = now.div_euclid(W);
+
+    // Raw pool for partition introspection + a controlled aged insert. No
+    // search_path here, so everything is schema-qualified.
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(&pg_url())
+        .await
+        .unwrap();
+    let partition_exists = |name: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM pg_class c
+                 JOIN pg_namespace n ON n.oid = c.relnamespace
+                 WHERE n.nspname = 'zenzip' AND c.relname = $1)",
+            )
+            .bind(name)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    // open() pre-created the current + next partitions.
+    assert!(partition_exists(format!("events_p{k0}")).await, "current partition");
+    assert!(partition_exists(format!("events_p{}", k0 + 1)).await, "next partition");
+
+    // Manufacture a ~5-day-old partition holding one aged event.
+    let k_old = k0 - 5;
+    let lo = k_old * W;
+    sqlx::query(&format!(
+        "CREATE TABLE zenzip.events_p{k_old} PARTITION OF zenzip.events \
+         FOR VALUES FROM ({lo}) TO ({})",
+        lo + W
+    ))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO zenzip.events (id, name, payload, emitted_at) VALUES ($1,$2,$3,$4)")
+        .bind("old1")
+        .bind("old.evt")
+        .bind("{}")
+        .bind(lo + 1)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // A live event lands in the current partition.
+    store.emit_event_blocking("now.evt", "{}", vec![]).unwrap();
+
+    // GC with a one-day-ago cutoff: the aged partition is dropped wholesale.
+    let stats = store.gc(None, Some(now - W)).await.unwrap();
+    assert_eq!(stats.events, 1, "one aged event reclaimed via partition drop");
+    assert!(
+        !partition_exists(format!("events_p{k_old}")).await,
+        "aged partition must be dropped by gc"
+    );
+
+    // The live event survives.
+    let recent = store.recent_events(10).await.unwrap();
+    assert_eq!(recent.len(), 1);
+    assert_eq!(recent[0].name, "now.evt");
+
+    pool.close().await;
+    store.close_blocking();
 }

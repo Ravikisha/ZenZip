@@ -24,6 +24,9 @@ const toc = [
   { id: "processing", title: "Processing" },
   { id: "retries-dlq", title: "Retries & the DLQ" },
   { id: "rate-limiting", title: "Rate limiting" },
+  { id: "per-key", title: "Per-key concurrency" },
+  { id: "throttle", title: "Throttle" },
+  { id: "debounce", title: "Debounce" },
   { id: "batch", title: "Batch consumers" },
   { id: "validation", title: "Payload validation" },
   { id: "lifecycle", title: "Crash recovery & shutdown" },
@@ -64,6 +67,14 @@ const dead = await emails.deadJobs();
 await emails.requeueDead();            // all of them
 await emails.requeueDead([dead[0].id]); // or specific ids
 
+// …or permanently discard them (P14.1):
+await emails.purgeDead();             // delete all dead jobs, returns the count
+
+// Pause/resume claiming (P14.1) — e.g. during an incident or maintenance:
+emails.pause();                       // stop claiming; in-flight jobs finish
+emails.isPaused();                    // → true
+emails.resume();                      // start claiming again
+
 // Health:
 await emails.pendingCount();  // claimable now or scheduled
 await emails.activeCount();   // pending + currently running`;
@@ -74,6 +85,28 @@ const rateLimit = `const webhooks = app.queue("webhooks", {
   // Burst capacity = max; refill is continuous.
   rateLimit: { max: 100, per: "1m" },
 });`;
+
+const throttle = `// Smooth starts to at most 5 per second per user (every job runs, paced).
+const notify = app.queue<{ userId: string }>("notify", {
+  throttle: { key: (d) => d.userId, max: 5, per: "1s" },
+});
+await notify.push({ userId: "u_42" });`;
+
+const debounce = `// Collapse a burst: only the last push per key runs, after a quiet window.
+const reindex = app.queue<{ docId: string }>("reindex", {
+  debounce: { key: (d) => d.docId, window: "5s" },
+});
+// 100 edits to doc "42" in 5s → one reindex of "42" runs.
+await reindex.push({ docId: "42" });`;
+
+const perKey = `// At most 1 job per user at a time; different users run in parallel.
+const sync = app.queue<{ userId: string }>("sync", {
+  concurrency: { limit: 1, key: (data) => data.userId },
+});
+sync.process(async (job) => { await syncUser(job.data.userId); });
+
+// Pushing computes the key from the data automatically.
+await sync.push({ userId: "u_42" });`;
 
 const batch = `const indexer = app.queue<Doc>("index", { concurrency: 2 });
 
@@ -126,9 +159,10 @@ export default function Page() {
         rows={[
           {
             name: "concurrency",
-            type: "number",
+            type: "number | { limit, key }",
             default: "10",
-            description: "Max handler invocations in flight for this queue.",
+            description:
+              "Max handler invocations in flight. A number caps the whole queue; { limit, key: (data) => string } caps in-flight per key — e.g. 1 per user/tenant (P10.1).",
           },
           {
             name: "retries",
@@ -172,6 +206,12 @@ export default function Page() {
             name: "rateLimit",
             type: "{ max, per }",
             description: "Token-bucket cap on job starts. See below.",
+          },
+          {
+            name: "maxPending",
+            type: "number",
+            description:
+              "Backpressure: push() / pushBulk() throw QueueFullError once this many jobs are pending. Best-effort admission control; omit for unbounded.",
           },
           {
             name: "schema",
@@ -238,6 +278,43 @@ export default function Page() {
         when a claim comes back short, and sleeps precisely until the next
         token instead of spinning. Combine with <Code>concurrency</Code> —
         rate limits cap throughput, concurrency caps parallelism.
+      </P>
+
+      <H2 id="per-key">Per-key concurrency</H2>
+      <CodeBlock code={perKey} />
+      <P>
+        The object form caps in-flight jobs <Strong>per key</Strong> — at most{" "}
+        <Code>limit</Code> jobs sharing <Code>key(data)</Code> run at once, while
+        different keys run in parallel. Enforced in the store at claim time, so
+        the cap holds across processes and nodes (on Postgres, keyed claims for
+        a queue serialize via an advisory lock to keep the count exact). The key
+        is computed at <Code>push</Code> from the job data.
+      </P>
+      <P>
+        <Strong>Fairness (P10.3):</Strong> add <Code>fair: true</Code> to
+        round-robin claims across the concurrency-key groups, so one busy tenant
+        can&apos;t starve the others — the claim batch takes one job per key
+        before a second from any.
+      </P>
+
+      <H2 id="throttle">Throttle</H2>
+      <CodeBlock code={throttle} />
+      <P>
+        Throttle <Strong>spreads</Strong> where debounce <Strong>drops</Strong>:
+        each push with a <Code>throttle.key</Code> is scheduled after the key&apos;s
+        last slot (spacing = <Code>per / max</Code>), smoothing starts to a steady
+        per-key rate — every job runs, just paced. Enforced at push via a
+        per-key cursor in the store, so the rate holds across processes.
+      </P>
+
+      <H2 id="debounce">Debounce</H2>
+      <CodeBlock code={debounce} />
+      <P>
+        Each push with a <Code>debounce.key</Code> deletes any still-pending job
+        with that key and reschedules <Code>window</Code> out — so a burst
+        collapses to a single run once it goes quiet. Enforced at push in the
+        store (atomic delete-then-insert), so it holds across processes. The key
+        is computed from the job data.
       </P>
 
       <H2 id="batch">Batch consumers</H2>

@@ -9,13 +9,14 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::store::{
-    status, workflow_execution_job, ClaimedJob, DeadJob, EmitOutcome, EventRow, MachineHistoryRow,
-    NewRun, PushJob, QueueStat, RunRow, ScheduleRow, StepEntry, StepRow, Store, StoreError,
-    StoreResult, TriggerTarget, TriggeredRun, Waiter,
+    status, workflow_execution_job, ClaimedJob, DeadJob, EmitOutcome, EventRow, GcStats,
+    MachineHistoryRow, NewRun, PushJob, QueueStat, RunRow, ScheduleRow, StepEntry, StepRow, Store,
+    StoreError, StoreResult, TriggerTarget, TriggeredRun, Waiter,
 };
+use crate::crypto::Crypto;
 use crate::time::now_ms;
 
 /// True when every key in the (optional) match object equals the same key in
@@ -126,6 +127,26 @@ const MIGRATIONS: &[&str] = &[
         updated_at  INTEGER NOT NULL,
         PRIMARY KEY (agent, id)
     );",
+    // v5 — retention GC (P7.6): index terminal runs by recency so the sweep
+    // is an index range scan, not a full table scan as runs accumulate.
+    "CREATE INDEX idx_runs_gc ON runs (status, updated_at);",
+    // v6 — fencing tokens (P7.11): a monotonic per-job counter bumped on each
+    // claim; ack/fail/renew are guarded by it, so a zombie worker can't write.
+    "ALTER TABLE jobs ADD COLUMN fence INTEGER NOT NULL DEFAULT 0;",
+    // v7 — per-key concurrency (P10.1): a bucket key + an index for the
+    // running-count check during keyed claims.
+    "ALTER TABLE jobs ADD COLUMN concurrency_key TEXT;
+     CREATE INDEX idx_jobs_ckey ON jobs (queue, concurrency_key, status);",
+    // v8 — debounce (P10.2): a bucket key + index for collapse-on-push.
+    "ALTER TABLE jobs ADD COLUMN debounce_key TEXT;
+     CREATE INDEX idx_jobs_debounce ON jobs (queue, debounce_key, status);",
+    // v9 — throttle (P10.2): per-key cursor of the next allowed start time.
+    "CREATE TABLE throttle_cursors (
+        queue    TEXT NOT NULL,
+        tkey     TEXT NOT NULL,
+        next_at  INTEGER NOT NULL,
+        PRIMARY KEY (queue, tkey)
+    );",
 ];
 
 fn none_on_no_rows<T>(e: rusqlite::Error) -> StoreResult<Option<T>> {
@@ -139,10 +160,19 @@ pub struct SqliteStore {
     /// `None` after `close()` — releases the file handle so data dirs can be
     /// removed promptly (Windows holds locks on open db files).
     conn: Arc<Mutex<Option<Connection>>>,
+    /// Payload-at-rest cipher (P7.15). Passthrough unless an encryption key
+    /// was configured.
+    crypto: Crypto,
 }
 
 impl SqliteStore {
     pub fn open(path: &Path) -> StoreResult<Self> {
+        Self::open_with(path, Crypto::disabled())
+    }
+
+    /// Open with payload encryption (P7.15). `crypto` is passthrough when no
+    /// key is configured, so this is also the plain path.
+    pub fn open_with(path: &Path, crypto: Crypto) -> StoreResult<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|e| StoreError::Other(format!("create data dir: {e}")))?;
@@ -155,6 +185,7 @@ impl SqliteStore {
         Self::migrate(&conn)?;
         Ok(Self {
             conn: Arc::new(Mutex::new(Some(conn))),
+            crypto,
         })
     }
 
@@ -202,7 +233,7 @@ impl SqliteStore {
         f(conn)
     }
 
-    fn create_run_inner(conn: &Connection, run: NewRun) -> StoreResult<(String, bool)> {
+    fn create_run_inner(conn: &Connection, run: NewRun, crypto: &Crypto) -> StoreResult<(String, bool)> {
         let now = now_ms();
         if let Some(key) = &run.idempotency_key {
             let existing: Option<String> = conn
@@ -228,7 +259,7 @@ impl SqliteStore {
             .execute(params![
                 id,
                 run.workflow,
-                run.input,
+                crypto.enc(&run.input),
                 run.version,
                 run.idempotency_key,
                 run.parent_run_id,
@@ -280,7 +311,9 @@ impl SqliteStore {
         step_id: &str,
         kind: &str,
         result: Option<String>,
+        crypto: &Crypto,
     ) -> StoreResult<()> {
+        let result = result.map(|r| crypto.enc(&r));
         // Never overwrite a completed entry: effectively-once recording.
         conn.prepare_cached(
             "INSERT INTO steps (run_id, step_id, kind, status, result, updated_at)
@@ -294,21 +327,50 @@ impl SqliteStore {
         Ok(())
     }
 
-    fn insert_job_row(conn: &Connection, job: &PushJob, now: i64) -> StoreResult<String> {
+    fn insert_job_row(conn: &Connection, job: &PushJob, now: i64, crypto: &Crypto) -> StoreResult<String> {
+        // Debounce (P10.2): drop any pending job with the same key first, so
+        // only this (latest) one survives — collapse-on-push.
+        if let Some(dk) = &job.debounce_key {
+            conn.prepare_cached(
+                "DELETE FROM jobs WHERE queue = ?1 AND status = 0 AND debounce_key = ?2",
+            )?
+            .execute(params![job.queue, dk])?;
+        }
+        // Throttle (P10.2): space this job after the key's last scheduled start,
+        // advancing the per-key cursor — smooths starts to a steady rate.
+        let mut available_at = now + job.delay_ms.max(0);
+        if let (Some(tk), Some(spacing)) = (&job.throttle_key, job.throttle_spacing_ms) {
+            let cursor: Option<i64> = conn
+                .query_row(
+                    "SELECT next_at FROM throttle_cursors WHERE queue = ?1 AND tkey = ?2",
+                    params![job.queue, tk],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let start = cursor.unwrap_or(now).max(now);
+            available_at = start;
+            conn.prepare_cached(
+                "INSERT INTO throttle_cursors (queue, tkey, next_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(queue, tkey) DO UPDATE SET next_at = ?3",
+            )?
+            .execute(params![job.queue, tk, start + spacing.max(0)])?;
+        }
         let id = uuid::Uuid::now_v7().to_string();
         conn.prepare_cached(
             "INSERT INTO jobs (id, queue, payload, status, priority, attempt, max_attempts,
-                               available_at, created_at, updated_at)
-             VALUES (?1, ?2, ?3, 0, ?4, 0, ?5, ?6, ?7, ?7)",
+                               available_at, created_at, updated_at, concurrency_key, debounce_key)
+             VALUES (?1, ?2, ?3, 0, ?4, 0, ?5, ?6, ?7, ?7, ?8, ?9)",
         )?
         .execute(params![
             id,
             job.queue,
-            job.payload,
+            crypto.enc(&job.payload),
             job.priority,
             job.max_attempts.max(1),
-            now + job.delay_ms.max(0),
+            available_at,
             now,
+            job.concurrency_key,
+            job.debounce_key,
         ])?;
         Ok(id)
     }
@@ -322,15 +384,18 @@ impl SqliteStore {
         payload: &str,
         targets: Vec<TriggerTarget>,
         now: i64,
+        crypto: &Crypto,
     ) -> StoreResult<EmitOutcome> {
         let event_id = uuid::Uuid::now_v7().to_string();
+        // Match predicates run against the in-memory plaintext payload; only the
+        // stored copy is encrypted (P7.15).
         let payload_value: serde_json::Value =
             serde_json::from_str(payload).unwrap_or(serde_json::Value::Null);
 
         tx.prepare_cached(
             "INSERT INTO events (id, name, payload, emitted_at) VALUES (?1, ?2, ?3, ?4)",
         )?
-        .execute(params![event_id, name, payload, now])?;
+        .execute(params![event_id, name, crypto.enc(payload), now])?;
 
         let candidates: Vec<(String, String, Option<String>, Option<String>)> = {
             let mut stmt = tx.prepare_cached(
@@ -364,8 +429,9 @@ impl SqliteStore {
                 &step_id,
                 "waitForEvent",
                 Some(format!(r#"{{"event":{payload}}}"#)),
+                crypto,
             )?;
-            Self::insert_job_row(tx, &workflow_execution_job(&workflow, &run_id, 0), now)?;
+            Self::insert_job_row(tx, &workflow_execution_job(&workflow, &run_id, 0), now, crypto)?;
             waiters.push(Waiter {
                 run_id,
                 workflow,
@@ -391,12 +457,14 @@ impl SqliteStore {
                     parent_run_id: None,
                     parent_step_id: None,
                 },
+                crypto,
             )?;
             if created {
                 Self::insert_job_row(
                     tx,
                     &workflow_execution_job(&target.workflow, &run_id, 0),
                     now,
+                    crypto,
                 )?;
                 triggered.push(TriggeredRun {
                     workflow: target.workflow,
@@ -412,12 +480,16 @@ impl SqliteStore {
         })
     }
 
-    fn push_inner(conn: &mut Connection, jobs: Vec<PushJob>) -> StoreResult<Vec<String>> {
+    fn push_inner(
+        conn: &mut Connection,
+        jobs: Vec<PushJob>,
+        crypto: &Crypto,
+    ) -> StoreResult<Vec<String>> {
         let now = now_ms();
         let tx = conn.transaction()?;
         let mut ids = Vec::with_capacity(jobs.len());
         for job in &jobs {
-            ids.push(Self::insert_job_row(&tx, job, now)?);
+            ids.push(Self::insert_job_row(&tx, job, now, crypto)?);
         }
         tx.commit()?;
         Ok(ids)
@@ -427,7 +499,8 @@ impl SqliteStore {
 #[async_trait]
 impl Store for SqliteStore {
     async fn push(&self, jobs: Vec<PushJob>) -> StoreResult<Vec<String>> {
-        self.with_conn(move |conn| Self::push_inner(conn, jobs))
+        let crypto = self.crypto.clone();
+        self.with_conn(move |conn| Self::push_inner(conn, jobs, &crypto))
             .await
     }
 
@@ -436,25 +509,92 @@ impl Store for SqliteStore {
         let conn = guard
             .as_mut()
             .ok_or_else(|| StoreError::Other("store closed".into()))?;
-        Self::push_inner(conn, jobs)
+        Self::push_inner(conn, jobs, &self.crypto)
     }
 
-    async fn claim(&self, queue: &str, limit: u32, lease_ms: i64) -> StoreResult<Vec<ClaimedJob>> {
+    async fn claim(
+        &self,
+        queue: &str,
+        limit: u32,
+        lease_ms: i64,
+        key_limit: Option<u32>,
+        fair: bool,
+    ) -> StoreResult<Vec<ClaimedJob>> {
         let queue = queue.to_string();
+        let crypto = self.crypto.clone();
         self.with_conn(move |conn| {
             let now = now_ms();
-            let mut stmt = conn.prepare_cached(
-                "UPDATE jobs
-                 SET status = 1, attempt = attempt + 1, lease_until = ?1, updated_at = ?2
+            // Window-function claim (SQLite ≥3.25, bundled). Used when a per-key
+            // limit (P10.1) and/or fairness (P10.3) is in play:
+            //   keyrank = running count + rank within key → enforces key_limit
+            //   rn      = rank within key → fairness orders by it so the LIMIT
+            //             spreads across groups (round-robin), starving none.
+            // The selection under LIMIT is what matters; dispatch order is
+            // re-sorted in Rust below. Non-window queues keep the proven path.
+            let fair_sql = "UPDATE jobs
+                 SET status = 1, attempt = attempt + 1, lease_until = ?1, updated_at = ?2,
+                     fence = fence + 1
+                 WHERE id IN (
+                     SELECT id FROM (
+                         SELECT j.id AS id, j.concurrency_key AS ck, j.priority AS pr,
+                             (SELECT COUNT(*) FROM jobs r
+                              WHERE r.queue = j.queue AND r.status = 1
+                                AND r.concurrency_key = j.concurrency_key)
+                             + ROW_NUMBER() OVER (
+                                 PARTITION BY j.concurrency_key
+                                 ORDER BY j.priority DESC, j.id ASC) AS keyrank,
+                             ROW_NUMBER() OVER (
+                                 PARTITION BY j.concurrency_key
+                                 ORDER BY j.priority DESC, j.id ASC) AS rn
+                         FROM jobs j
+                         WHERE j.queue = ?3 AND j.status = 0 AND j.available_at <= ?2
+                     )
+                     WHERE ck IS NULL OR keyrank <= ?5
+                     ORDER BY rn ASC, pr DESC, id ASC
+                     LIMIT ?4
+                 )
+                 RETURNING id, queue, payload, attempt, max_attempts, priority, fence";
+            let keyed_sql = "UPDATE jobs
+                 SET status = 1, attempt = attempt + 1, lease_until = ?1, updated_at = ?2,
+                     fence = fence + 1
+                 WHERE id IN (
+                     SELECT id FROM (
+                         SELECT j.id AS id, j.concurrency_key AS ck,
+                             (SELECT COUNT(*) FROM jobs r
+                              WHERE r.queue = j.queue AND r.status = 1
+                                AND r.concurrency_key = j.concurrency_key)
+                             + ROW_NUMBER() OVER (
+                                 PARTITION BY j.concurrency_key
+                                 ORDER BY j.priority DESC, j.id ASC) AS keyrank
+                         FROM jobs j
+                         WHERE j.queue = ?3 AND j.status = 0 AND j.available_at <= ?2
+                     )
+                     WHERE ck IS NULL OR keyrank <= ?5
+                     ORDER BY id ASC
+                     LIMIT ?4
+                 )
+                 RETURNING id, queue, payload, attempt, max_attempts, priority, fence";
+            let plain_sql = "UPDATE jobs
+                 SET status = 1, attempt = attempt + 1, lease_until = ?1, updated_at = ?2,
+                     fence = fence + 1
                  WHERE id IN (
                      SELECT id FROM jobs
                      WHERE queue = ?3 AND status = 0 AND available_at <= ?2
                      ORDER BY priority DESC, id ASC
                      LIMIT ?4
                  )
-                 RETURNING id, queue, payload, attempt, max_attempts, priority",
-            )?;
-            let rows = stmt.query_map(params![now + lease_ms, now, queue, limit], |r| {
+                 RETURNING id, queue, payload, attempt, max_attempts, priority, fence";
+            let use_window = fair || key_limit.is_some();
+            let sql = if fair {
+                fair_sql
+            } else if key_limit.is_some() {
+                keyed_sql
+            } else {
+                plain_sql
+            };
+            let mut stmt = conn.prepare_cached(sql)?;
+            let key_cap = key_limit.map(|k| k as i64).unwrap_or(i64::MAX);
+            let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<(ClaimedJob, i64)> {
                 Ok((
                     ClaimedJob {
                         id: r.get(0)?,
@@ -462,72 +602,105 @@ impl Store for SqliteStore {
                         payload: r.get(2)?,
                         attempt: r.get::<_, i64>(3)? as u32,
                         max_attempts: r.get::<_, i64>(4)? as u32,
+                        fence: r.get::<_, i64>(6)?,
                     },
                     r.get::<_, i64>(5)?,
                 ))
-            })?;
+            };
             let mut jobs = Vec::new();
-            for row in rows {
-                jobs.push(row?);
+            if use_window {
+                let rows =
+                    stmt.query_map(params![now + lease_ms, now, queue, limit, key_cap], map_row)?;
+                for row in rows {
+                    jobs.push(row?);
+                }
+            } else {
+                let rows = stmt.query_map(params![now + lease_ms, now, queue, limit], map_row)?;
+                for row in rows {
+                    jobs.push(row?);
+                }
             }
             // RETURNING does not preserve the subquery's ORDER BY — restore
             // dispatch order (priority DESC, id ASC) here.
             jobs.sort_by(|(a, pa), (b, pb)| pb.cmp(pa).then(a.id.cmp(&b.id)));
-            Ok(jobs.into_iter().map(|(job, _)| job).collect())
+            Ok(jobs
+                .into_iter()
+                .map(|(mut job, _)| {
+                    job.payload = crypto.dec(&job.payload); // P7.15
+                    job
+                })
+                .collect())
         })
         .await
     }
 
-    async fn ack(&self, id: &str) -> StoreResult<()> {
+    async fn ack(&self, id: &str, fence: i64) -> StoreResult<()> {
         let id = id.to_string();
         self.with_conn(move |conn| {
-            conn.prepare_cached("DELETE FROM jobs WHERE id = ?1")?
-                .execute(params![id])?;
+            conn.prepare_cached("DELETE FROM jobs WHERE id = ?1 AND fence = ?2")?
+                .execute(params![id, fence])?;
             Ok(())
         })
         .await
     }
 
-    async fn fail_retry(&self, id: &str, error: &str, available_at: i64) -> StoreResult<()> {
+    async fn fail_retry(
+        &self,
+        id: &str,
+        error: &str,
+        available_at: i64,
+        fence: i64,
+    ) -> StoreResult<()> {
         let (id, error) = (id.to_string(), error.to_string());
         self.with_conn(move |conn| {
             conn.prepare_cached(
                 "UPDATE jobs SET status = 0, available_at = ?1, last_error = ?2,
                                  lease_until = NULL, updated_at = ?3
-                 WHERE id = ?4",
+                 WHERE id = ?4 AND fence = ?5",
             )?
-            .execute(params![available_at, error, now_ms(), id])?;
+            .execute(params![available_at, error, now_ms(), id, fence])?;
             Ok(())
         })
         .await
     }
 
-    async fn fail_dead(&self, id: &str, error: &str) -> StoreResult<()> {
+    async fn fail_dead(&self, id: &str, error: &str, fence: i64) -> StoreResult<()> {
         let (id, error) = (id.to_string(), error.to_string());
         self.with_conn(move |conn| {
             conn.prepare_cached(
                 "UPDATE jobs SET status = 3, last_error = ?1, lease_until = NULL, updated_at = ?2
-                 WHERE id = ?3",
+                 WHERE id = ?3 AND fence = ?4",
             )?
-            .execute(params![error, now_ms(), id])?;
+            .execute(params![error, now_ms(), id, fence])?;
             Ok(())
         })
         .await
     }
 
-    async fn renew_leases(&self, ids: Vec<String>, lease_until: i64) -> StoreResult<()> {
+    async fn renew_leases(&self, leases: Vec<(String, i64)>, lease_ms: i64) -> StoreResult<()> {
         self.with_conn(move |conn| {
             let tx = conn.transaction()?;
             {
                 let mut stmt = tx.prepare_cached(
-                    "UPDATE jobs SET lease_until = ?1, updated_at = ?2 WHERE id = ?3 AND status = 1",
+                    "UPDATE jobs SET lease_until = ?1, updated_at = ?2
+                     WHERE id = ?3 AND status = 1 AND fence = ?4",
                 )?;
+                // Single-node SQLite: caller wall clock is the only clock.
                 let now = now_ms();
-                for id in &ids {
-                    stmt.execute(params![lease_until, now, id])?;
+                let lease_until = now + lease_ms;
+                for (id, fence) in &leases {
+                    stmt.execute(params![lease_until, now, id, fence])?;
                 }
             }
             tx.commit()?;
+            Ok(())
+        })
+        .await
+    }
+
+    async fn ping(&self) -> StoreResult<()> {
+        self.with_conn(|conn| {
+            conn.query_row("SELECT 1", [], |_| Ok(()))?;
             Ok(())
         })
         .await
@@ -553,6 +726,37 @@ impl Store for SqliteStore {
                 )?
                 .execute(params![now])?;
             Ok((dead + retried) as u64)
+        })
+        .await
+    }
+
+    async fn gc(&self, run_before: Option<i64>, event_before: Option<i64>) -> StoreResult<GcStats> {
+        self.with_conn(move |conn| {
+            let tx = conn.transaction()?;
+            let mut stats = GcStats::default();
+            if let Some(before) = run_before {
+                // No ON DELETE CASCADE in SQLite here — delete the journal of
+                // terminal, aged runs first, then the runs themselves.
+                stats.steps = tx
+                    .prepare_cached(
+                        "DELETE FROM steps WHERE run_id IN (
+                            SELECT id FROM runs
+                            WHERE status IN (4, 5, 6) AND updated_at < ?1)",
+                    )?
+                    .execute(params![before])? as u64;
+                stats.runs = tx
+                    .prepare_cached(
+                        "DELETE FROM runs WHERE status IN (4, 5, 6) AND updated_at < ?1",
+                    )?
+                    .execute(params![before])? as u64;
+            }
+            if let Some(before) = event_before {
+                stats.events = tx
+                    .prepare_cached("DELETE FROM events WHERE emitted_at < ?1")?
+                    .execute(params![before])? as u64;
+            }
+            tx.commit()?;
+            Ok(stats)
         })
         .await
     }
@@ -585,6 +789,7 @@ impl Store for SqliteStore {
 
     async fn dead_jobs(&self, queue: &str, limit: u32) -> StoreResult<Vec<DeadJob>> {
         let queue = queue.to_string();
+        let crypto = self.crypto.clone();
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare_cached(
                 "SELECT id, queue, payload, attempt, last_error, created_at
@@ -602,7 +807,9 @@ impl Store for SqliteStore {
             })?;
             let mut jobs = Vec::new();
             for row in rows {
-                jobs.push(row?);
+                let mut job = row?;
+                job.payload = crypto.dec(&job.payload); // P7.15
+                jobs.push(job);
             }
             Ok(jobs)
         })
@@ -630,29 +837,55 @@ impl Store for SqliteStore {
         .await
     }
 
+    async fn purge_dead(&self, queue: &str) -> StoreResult<u64> {
+        let queue = queue.to_string();
+        self.with_conn(move |conn| {
+            let n = conn
+                .prepare_cached("DELETE FROM jobs WHERE queue = ?1 AND status = 3")?
+                .execute(params![queue])?;
+            Ok(n as u64)
+        })
+        .await
+    }
+
     // -- Workflow runs + step journal (P2) ---------------------------------
 
     async fn create_run(&self, run: NewRun) -> StoreResult<(String, bool)> {
-        self.with_conn(move |conn| Self::create_run_inner(conn, run))
+        let crypto = self.crypto.clone();
+        self.with_conn(move |conn| Self::create_run_inner(conn, run, &crypto))
             .await
     }
 
     fn create_run_blocking(&self, run: NewRun) -> StoreResult<(String, bool)> {
-        self.blocking(|conn| Self::create_run_inner(conn, run))
+        self.blocking(|conn| Self::create_run_inner(conn, run, &self.crypto))
     }
 
     async fn get_run(&self, id: &str) -> StoreResult<Option<RunRow>> {
         let id = id.to_string();
-        self.with_conn(move |conn| Self::get_run_inner(conn, &id))
-            .await
+        let crypto = self.crypto.clone();
+        self.with_conn(move |conn| {
+            let mut row = Self::get_run_inner(conn, &id)?;
+            if let Some(r) = &mut row {
+                r.input = crypto.dec(&r.input); // P7.15
+                r.output = r.output.as_deref().map(|o| crypto.dec(o));
+            }
+            Ok(row)
+        })
+        .await
     }
 
     fn get_run_blocking(&self, id: &str) -> StoreResult<Option<RunRow>> {
-        self.blocking(|conn| Self::get_run_inner(conn, id))
+        let mut row = self.blocking(|conn| Self::get_run_inner(conn, id))?;
+        if let Some(r) = &mut row {
+            r.input = self.crypto.dec(&r.input); // P7.15
+            r.output = r.output.as_deref().map(|o| self.crypto.dec(o));
+        }
+        Ok(row)
     }
 
     async fn load_journal(&self, run_id: &str) -> StoreResult<Vec<StepEntry>> {
         let run_id = run_id.to_string();
+        let crypto = self.crypto.clone();
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare_cached(
                 "SELECT step_id, kind, result FROM steps WHERE run_id = ?1 AND status = 1",
@@ -666,7 +899,9 @@ impl Store for SqliteStore {
             })?;
             let mut out = Vec::new();
             for row in rows {
-                out.push(row?);
+                let mut e = row?;
+                e.result = e.result.as_deref().map(|r| crypto.dec(r)); // P7.15
+                out.push(e);
             }
             Ok(out)
         })
@@ -681,8 +916,11 @@ impl Store for SqliteStore {
         result: Option<String>,
     ) -> StoreResult<()> {
         let (run_id, step_id, kind) = (run_id.to_string(), step_id.to_string(), kind.to_string());
-        self.with_conn(move |conn| Self::record_step_inner(conn, &run_id, &step_id, &kind, result))
-            .await
+        let crypto = self.crypto.clone();
+        self.with_conn(move |conn| {
+            Self::record_step_inner(conn, &run_id, &step_id, &kind, result, &crypto)
+        })
+        .await
     }
 
     fn record_step_blocking(
@@ -692,7 +930,7 @@ impl Store for SqliteStore {
         kind: &str,
         result: Option<String>,
     ) -> StoreResult<()> {
-        self.blocking(|conn| Self::record_step_inner(conn, run_id, step_id, kind, result))
+        self.blocking(|conn| Self::record_step_inner(conn, run_id, step_id, kind, result, &self.crypto))
     }
 
     async fn step_failed_attempt(
@@ -720,6 +958,7 @@ impl Store for SqliteStore {
 
     async fn run_completed(&self, id: &str, output: Option<String>) -> StoreResult<()> {
         let id = id.to_string();
+        let output = output.map(|o| self.crypto.enc(&o)); // P7.15
         self.with_conn(move |conn| {
             conn.prepare_cached(
                 "UPDATE runs SET status = 4, output = ?1, wait_event = NULL,
@@ -817,7 +1056,7 @@ impl Store for SqliteStore {
     ) -> StoreResult<EmitOutcome> {
         self.blocking(|conn| {
             let tx = conn.transaction()?;
-            let outcome = Self::emit_in_tx(&tx, name, payload, targets, now_ms())?;
+            let outcome = Self::emit_in_tx(&tx, name, payload, targets, now_ms(), &self.crypto)?;
             tx.commit()?;
             Ok(outcome)
         })
@@ -879,7 +1118,7 @@ impl Store for SqliteStore {
             .execute(params![machine, id, from, event, to, now])?;
             // Transition + event + triggered runs commit together — no
             // transition-without-event crash window.
-            let outcome = Self::emit_in_tx(&tx, event_name, payload, targets, now)?;
+            let outcome = Self::emit_in_tx(&tx, event_name, payload, targets, now, &self.crypto)?;
             tx.commit()?;
             Ok(Some(outcome))
         })
@@ -944,6 +1183,7 @@ impl Store for SqliteStore {
         status: Option<i64>,
         limit: u32,
     ) -> StoreResult<Vec<RunRow>> {
+        let crypto = self.crypto.clone();
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare_cached(
                 "SELECT id, workflow, status, input, output, error, version,
@@ -970,7 +1210,10 @@ impl Store for SqliteStore {
             })?;
             let mut out = Vec::new();
             for row in rows {
-                out.push(row?);
+                let mut e = row?;
+                e.input = crypto.dec(&e.input); // P7.15
+                e.output = e.output.as_deref().map(|o| crypto.dec(o));
+                out.push(e);
             }
             Ok(out)
         })
@@ -979,6 +1222,7 @@ impl Store for SqliteStore {
 
     async fn steps_for_run(&self, run_id: &str) -> StoreResult<Vec<StepRow>> {
         let run_id = run_id.to_string();
+        let crypto = self.crypto.clone();
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare_cached(
                 "SELECT step_id, kind, status, result, error, attempts, updated_at
@@ -997,7 +1241,9 @@ impl Store for SqliteStore {
             })?;
             let mut out = Vec::new();
             for row in rows {
-                out.push(row?);
+                let mut e = row?;
+                e.result = e.result.as_deref().map(|r| crypto.dec(r)); // P7.15
+                out.push(e);
             }
             Ok(out)
         })
@@ -1056,6 +1302,7 @@ impl Store for SqliteStore {
     }
 
     async fn recent_events(&self, limit: u32) -> StoreResult<Vec<EventRow>> {
+        let crypto = self.crypto.clone();
         self.with_conn(move |conn| {
             let mut stmt = conn.prepare_cached(
                 "SELECT id, name, payload, emitted_at FROM events
@@ -1071,7 +1318,9 @@ impl Store for SqliteStore {
             })?;
             let mut out = Vec::new();
             for row in rows {
-                out.push(row?);
+                let mut e = row?;
+                e.payload = crypto.dec(&e.payload); // P7.15
+                out.push(e);
             }
             Ok(out)
         })
@@ -1249,3 +1498,112 @@ impl Store for SqliteStore {
 // Touch the status module so the constants stay referenced from this crate.
 #[allow(dead_code)]
 const _: i64 = status::PENDING;
+
+#[cfg(test)]
+mod encryption_tests {
+    use super::*;
+    use crate::store::{NewRun, PushJob};
+
+    // Payload encryption at rest (P7.15): every durable payload column is
+    // ciphertext on disk yet plaintext through the API. We read the raw columns
+    // with a second connection to prove the at-rest half.
+    #[tokio::test]
+    async fn payloads_encrypted_at_rest_decrypted_on_read() {
+        let dir = std::env::temp_dir().join(format!("zenzip-enc-{}", uuid::Uuid::now_v7()));
+        let path = dir.join("z.db");
+        let store = SqliteStore::open_with(&path, Crypto::new(Some("secret-key"))).unwrap();
+        let raw = Connection::open(&path).unwrap();
+        let col = |sql: &str| -> String {
+            raw.query_row(sql, [], |r| r.get::<_, String>(0)).unwrap()
+        };
+
+        // Job payload.
+        let job_secret = r#"{"ssn":"123-45-6789"}"#;
+        store
+            .push(vec![PushJob {
+                queue: "q".into(),
+                payload: job_secret.into(),
+                ..Default::default()
+            }])
+            .await
+            .unwrap();
+        let claimed = store.claim("q", 1, 30_000, None, false).await.unwrap();
+        assert_eq!(claimed[0].payload, job_secret, "claim decrypts");
+        let stored = col("SELECT payload FROM jobs LIMIT 1");
+        assert!(stored.starts_with("enc:1:"), "job payload encrypted at rest");
+        assert!(!stored.contains("123-45-6789"));
+
+        // Run input + output, and a step result.
+        let (run_id, _) = store
+            .create_run(NewRun {
+                workflow: "w".into(),
+                input: r#"{"in":"in-secret"}"#.into(),
+                version: None,
+                idempotency_key: None,
+                parent_run_id: None,
+                parent_step_id: None,
+            })
+            .await
+            .unwrap();
+        store
+            .record_step(&run_id, "s1", "run", Some(r#"{"card":"4111-1111"}"#.into()))
+            .await
+            .unwrap();
+        store
+            .run_completed(&run_id, Some(r#"{"out":"out-secret"}"#.into()))
+            .await
+            .unwrap();
+
+        let row = store.get_run(&run_id).await.unwrap().unwrap();
+        assert_eq!(row.input, r#"{"in":"in-secret"}"#);
+        assert_eq!(row.output.as_deref(), Some(r#"{"out":"out-secret"}"#));
+        assert!(store
+            .load_journal(&run_id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|e| e.result.as_deref() == Some(r#"{"card":"4111-1111"}"#)));
+        assert!(col("SELECT input FROM runs LIMIT 1").starts_with("enc:1:"));
+        let step_raw = col("SELECT result FROM steps LIMIT 1");
+        assert!(step_raw.starts_with("enc:1:") && !step_raw.contains("4111"));
+        assert!(col("SELECT output FROM runs LIMIT 1").starts_with("enc:1:"));
+
+        // Event payload (through the outbox, including server-side match path).
+        store
+            .emit_event_blocking("evt", r#"{"email":"a@b.com"}"#, vec![])
+            .unwrap();
+        assert!(store
+            .recent_events(10)
+            .await
+            .unwrap()
+            .iter()
+            .any(|e| e.payload.contains("a@b.com")));
+        let evt_raw = col("SELECT payload FROM events LIMIT 1");
+        assert!(evt_raw.starts_with("enc:1:") && !evt_raw.contains("a@b.com"));
+
+        store.close();
+        drop(raw);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // A store opened WITHOUT a key reads legacy plaintext rows written before
+    // encryption was enabled (the prefix sentinel makes reads back-compatible).
+    #[tokio::test]
+    async fn plaintext_rows_remain_readable() {
+        let dir = std::env::temp_dir().join(format!("zenzip-plain-{}", uuid::Uuid::now_v7()));
+        let path = dir.join("z.db");
+        let store = SqliteStore::open(&path).unwrap(); // disabled cipher
+        store
+            .push(vec![PushJob {
+                queue: "q".into(),
+                payload: r#"{"x":1}"#.into(),
+                ..Default::default()
+            }])
+            .await
+            .unwrap();
+        let claimed = store.claim("q", 1, 30_000, None, false).await.unwrap();
+        assert_eq!(claimed[0].payload, r#"{"x":1}"#);
+        store.close();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

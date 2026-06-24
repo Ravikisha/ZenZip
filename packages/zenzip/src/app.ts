@@ -662,6 +662,7 @@ export class ZenzipApp {
             : undefined,
         runRetentionMs: retentionMs(this.#options.retention?.runs),
         eventRetentionMs: retentionMs(this.#options.retention?.events),
+        encryptionKey: this.#options.encryptionKey,
       },
       logger
         ? (err: Error | null, event: LogEvent) => {

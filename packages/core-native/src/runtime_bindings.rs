@@ -44,6 +44,14 @@ pub struct JsRuntimeOptions {
     pub worker_threads: Option<u32>,
     /// error | warn | info | debug | trace | off (default: off)
     pub log_level: Option<String>,
+    /// Retention GC sweep cadence in ms (P7.6). Default: 1h.
+    pub gc_sweep_ms: Option<f64>,
+    /// Delete terminal runs older than this (ms). <= 0 disables. Default: 7d.
+    pub run_retention_ms: Option<f64>,
+    /// Delete events older than this (ms). <= 0 disables. Default: 7d.
+    pub event_retention_ms: Option<f64>,
+    /// Payload encryption-at-rest passphrase (P7.15). Unset/empty = disabled.
+    pub encryption_key: Option<String>,
 }
 
 #[napi(object)]
@@ -60,6 +68,10 @@ pub struct JsQueueOptions {
     pub handler_batch: Option<u32>,
     pub rate_limit_max: Option<u32>,
     pub rate_limit_per_ms: Option<f64>,
+    /// Per-key concurrency limit (P10.1).
+    pub concurrency_key_limit: Option<u32>,
+    /// Fairness across concurrency-key groups (P10.3).
+    pub fair: Option<bool>,
 }
 
 #[napi(object)]
@@ -82,6 +94,13 @@ pub struct JsPushOptions {
     pub delay_ms: Option<f64>,
     pub priority: Option<i32>,
     pub max_attempts: Option<u32>,
+    /// Per-key concurrency bucket for this job (P10.1).
+    pub concurrency_key: Option<String>,
+    /// Debounce bucket for this job (P10.2).
+    pub debounce_key: Option<String>,
+    /// Throttle bucket + spacing (ms) for this job (P10.2).
+    pub throttle_key: Option<String>,
+    pub throttle_spacing_ms: Option<f64>,
 }
 
 #[napi(object)]
@@ -213,6 +232,12 @@ fn queue_config(opts: &JsQueueOptions) -> QueueConfig {
     if let Some(h) = opts.handler_batch {
         cfg.handler_batch = h.max(1);
     }
+    if let Some(k) = opts.concurrency_key_limit {
+        cfg.concurrency_key_limit = Some(k.max(1));
+    }
+    if let Some(f) = opts.fair {
+        cfg.fair = f;
+    }
     if let (Some(max), Some(per_ms)) = (opts.rate_limit_max, opts.rate_limit_per_ms) {
         cfg.rate_limit = Some(RateLimit {
             max: max.max(1),
@@ -254,6 +279,16 @@ impl ZenRuntime {
         if let Some(w) = options.worker_threads {
             config.worker_threads = (w as usize).max(1);
         }
+        if let Some(g) = options.gc_sweep_ms {
+            config.gc_sweep_ms = (g as u64).max(1_000);
+        }
+        if let Some(r) = options.run_retention_ms {
+            config.run_retention_ms = if r <= 0.0 { None } else { Some(r as i64) };
+        }
+        if let Some(e) = options.event_retention_ms {
+            config.event_retention_ms = if e <= 0.0 { None } else { Some(e as i64) };
+        }
+        config.encryption_key = options.encryption_key.filter(|k| !k.is_empty());
         let core = CoreRuntime::new(config).map_err(err)?;
         Ok(Self {
             core: Arc::new(core),
@@ -430,6 +465,19 @@ impl ZenRuntime {
     #[napi]
     pub fn metrics_snapshot(&self) -> Result<String> {
         serde_json::to_string(&self.core.metrics()).map_err(|e| err(e.to_string()))
+    }
+
+    /// Run a retention GC pass now; returns `{ runs, steps, events }` JSON (P7.6).
+    #[napi]
+    pub fn run_gc(&self) -> Result<String> {
+        let stats = self.core.gc_now().map_err(err)?;
+        serde_json::to_string(&stats).map_err(|e| err(e.to_string()))
+    }
+
+    /// Readiness: started AND the store answers a ping (P7.7).
+    #[napi]
+    pub fn health_check(&self) -> bool {
+        self.core.ready()
     }
 
     /// Agent session conversation JSON, or null (P4.7).
@@ -611,6 +659,10 @@ impl ZenRuntime {
             delay_ms: None,
             priority: None,
             max_attempts: None,
+            concurrency_key: None,
+            debounce_key: None,
+            throttle_key: None,
+            throttle_spacing_ms: None,
         });
         // Default maxAttempts from the locally registered queue config when
         // the producer didn't specify one.
@@ -628,6 +680,10 @@ impl ZenRuntime {
                 priority: opts.priority.unwrap_or(0),
                 delay_ms: opts.delay_ms.unwrap_or(0.0) as i64,
                 max_attempts: default_attempts,
+                concurrency_key: opts.concurrency_key.clone(),
+                debounce_key: opts.debounce_key.clone(),
+                throttle_key: opts.throttle_key.clone(),
+                throttle_spacing_ms: opts.throttle_spacing_ms.map(|m| m as i64),
             })
             .collect();
         self.core.push(jobs).map_err(err)
@@ -677,6 +733,34 @@ impl ZenRuntime {
         let store = self.core.store();
         let n = store
             .requeue_dead(ids)
+            .await
+            .map_err(|e| err(e.to_string()))?;
+        Ok(n as f64)
+    }
+
+    /// Pause a queue: stop claiming new jobs on this node (P14.1).
+    #[napi]
+    pub fn pause_queue(&self, queue: String) {
+        self.core.pause_queue(&queue);
+    }
+
+    /// Resume a paused queue.
+    #[napi]
+    pub fn resume_queue(&self, queue: String) {
+        self.core.resume_queue(&queue);
+    }
+
+    #[napi]
+    pub fn is_queue_paused(&self, queue: String) -> bool {
+        self.core.is_queue_paused(&queue)
+    }
+
+    /// Bulk control-plane op (P14.1): delete all dead-lettered jobs for a queue.
+    #[napi]
+    pub async fn purge_dead(&self, queue: String) -> Result<f64> {
+        let store = self.core.store();
+        let n = store
+            .purge_dead(&queue)
             .await
             .map_err(|e| err(e.to_string()))?;
         Ok(n as f64)

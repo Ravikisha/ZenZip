@@ -21,6 +21,7 @@ const toc = [
   { id: "model", title: "Agents are workflows" },
   { id: "defining", title: "Defining an agent" },
   { id: "tools", title: "Tools" },
+  { id: "mcp", title: "MCP tools" },
   { id: "approval", title: "Human-in-the-loop" },
   { id: "sessions", title: "Session memory" },
   { id: "handoff", title: "Multi-agent handoff" },
@@ -88,6 +89,31 @@ await support.run("What's my name?", { sessionId: "cus_7" });
 // → "Your name is Ada." — history persisted in the store (windowed)
 
 const transcript = await support.session("cus_7");  // LlmMessage[]`;
+
+const mcpCode = `import { mcp } from "zenzip";
+
+// CONSUME — connect to an MCP server and use its tools (P9.2a). Connecting is
+// async, so spread the result into the agent's tools:
+const app = zenzip();
+app.agent("research", {
+  model: anthropic(),
+  tools: [
+    ...(await mcp("https://mcp.example.com/")),   // every MCP tool
+    ...(await mcp({ url: "https://other/", prefix: "x_", headers: { authorization }, ssrf: true })),
+    searchDocs,                                    // local tools alongside
+  ],
+});`;
+
+const mcpServerCode = `// AUTHOR — expose this app's workflows + agents AS an MCP server (P9.2b),
+// so other agents can call them durably.
+await app.start();
+await app.mcpServer({ port: 4200, token: process.env.MCP_TOKEN });
+//   workflows: true | ["only", "these"]   — what to expose (default: all)
+//   agents:    true | ["only", "these"]
+//   wait: "60s" | false                   — triggerAndWait, or return { runId }
+
+// Or embed the endpoint in an existing server instead of a standalone one:
+http.createServer(app.mcpHandler()).listen(4200);`;
 
 const handoff = `import { handoffTool } from "zenzip";
 
@@ -172,6 +198,31 @@ export default function Page() {
         model. Throwing marks the step failed: retried with backoff per{" "}
         <Code>stepRetries</Code>, then the run fails with a precise error.
       </P>
+      <P>
+        If a tool fetches a model- or user-supplied URL, guard it with{" "}
+        <Code>assertPublicUrl(url)</Code> (P7.16) before fetching — it
+        resolve-then-validates the host and rejects private / loopback /
+        link-local / cloud-metadata targets (SSRF). The built-in{" "}
+        <Code>mcp(url)</Code> takes <Code>ssrf: true</Code> to apply the same
+        guard.
+      </P>
+
+      <H2 id="mcp">MCP tools</H2>
+      <P>
+        <Code>mcp(url)</Code> connects to a Model Context Protocol server over
+        Streamable HTTP, lists its tools, and returns them as ZenZip agent
+        tools. Each call runs inside the agent&apos;s journaled tool step — so
+        an MCP call is durable and retried like any other step. Connecting is
+        async; spread the result into <Code>tools</Code>.
+      </P>
+      <CodeBlock code={mcpCode} filename="mcp.ts" />
+      <P>
+        The reverse direction works too: <Code>app.mcpServer()</Code> exposes
+        your own workflows and agents <Strong>as</Strong> an MCP server, so
+        other agents can call them durably — a workflow tool triggers a run, an
+        agent tool runs the agent.
+      </P>
+      <CodeBlock code={mcpServerCode} filename="mcp-server.ts" />
 
       <H2 id="approval">Human-in-the-loop</H2>
       <CodeBlock code={approval} filename="approval.ts" />
@@ -204,6 +255,15 @@ export default function Page() {
         reliability. Streaming: pass <Code>onToken</Code> to{" "}
         <Code>agent.run()</Code>; live runs stream (Anthropic SSE), memoized
         replays never re-stream.
+      </P>
+      <P>
+        <Strong>Cost accounting (P9.7):</Strong> every <Code>agent.run()</Code>{" "}
+        result carries <Code>usage</Code> (token counts) and{" "}
+        <Code>costUsd</Code> — an estimate from a built-in per-model price table.
+        Prices drift; override with{" "}
+        <Code>registerPricing(&quot;model-prefix&quot;, &#123; input, output &#125;)</Code>{" "}
+        (USD per 1M tokens), or compute directly via{" "}
+        <Code>costOf(model, usage)</Code>.
       </P>
 
       <H2 id="options">Options</H2>

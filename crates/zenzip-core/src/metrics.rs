@@ -20,6 +20,9 @@ pub struct Metrics {
     pub steps_recorded: AtomicU64,
     pub events_emitted: AtomicU64,
     pub schedule_fires: AtomicU64,
+    pub runs_gc: AtomicU64,
+    pub steps_gc: AtomicU64,
+    pub events_gc: AtomicU64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -37,6 +40,9 @@ pub struct MetricsSnapshot {
     pub steps_recorded: u64,
     pub events_emitted: u64,
     pub schedule_fires: u64,
+    pub runs_gc: u64,
+    pub steps_gc: u64,
+    pub events_gc: u64,
 }
 
 impl Metrics {
@@ -66,6 +72,9 @@ impl Metrics {
             steps_recorded: self.steps_recorded.load(Ordering::Relaxed),
             events_emitted: self.events_emitted.load(Ordering::Relaxed),
             schedule_fires: self.schedule_fires.load(Ordering::Relaxed),
+            runs_gc: self.runs_gc.load(Ordering::Relaxed),
+            steps_gc: self.steps_gc.load(Ordering::Relaxed),
+            events_gc: self.events_gc.load(Ordering::Relaxed),
         }
     }
 }

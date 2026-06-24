@@ -10,36 +10,38 @@ on a single Rust-powered runtime — with **zero infrastructure**.
 No Redis. No Temporal cluster. No RabbitMQ. No cron box.
 `npm install` is the entire setup.
 
-*Status: pre-1.0 alpha — phases 0–5 complete, 82 tests green, building in the open.*
+*Status: pre-1.0, built in the open. **190+ tests green** (138 TypeScript + 53 Rust),
+including SIGKILL crash-injection and multi-node Postgres chaos.*
 
 </div>
 
 ---
 
-## Why
+## Why ZenZip
 
 A typical production Node backend accumulates this stack:
 
 | You operate today | ZenZip replaces it with |
 |---|---|
 | BullMQ + Redis | `app.queue()` |
-| Temporal (a cluster) | `app.workflow()` |
+| Temporal / a workflow cluster | `app.workflow()` |
 | node-cron on a pet server | `app.schedule()` |
-| RabbitMQ / SNS | `app.emit()` / `on:` triggers |
+| RabbitMQ / SNS / SQS | `app.emit()` + `on:` triggers |
 | LangGraph + custom glue | `app.agent()` |
+| Express + middleware stack | `app.use()` / `app.get()` (Express-compatible) |
 | Hand-assembled Grafana | `app.dashboard()` |
 
 Each piece works. Together they are six services to provision, secure, monitor,
-and pay for — before you write business logic. ZenZip embeds the runtime in
-your process the way SQLite replaced "install a database server": state lives
-in one SQLite file in your project folder. Need horizontal scale later?
-Point the same API at Postgres with one config line.
+and pay for — before you write a line of business logic. ZenZip embeds the
+runtime in your process the way **SQLite replaced "install a database server"**:
+state lives in one SQLite file in your project folder. Need horizontal scale
+later? Point the same API at Postgres with one config line.
 
-**Speed is not the pitch — durability is.** We benchmarked our own Rust HTTP
-server idea against Fastify and killed it when the numbers said no
-([docs/content/spike-results.md](docs/content/spike-results.md)). What Rust
-buys here is an engine where timers, leases, retries, and crash recovery never
-depend on your event loop being alive.
+> **Speed is not the pitch — durability is.** We benchmarked our own Rust HTTP
+> server idea against Fastify and *killed it* when the numbers said no. What
+> Rust buys here is an engine where timers, leases, retries, and crash recovery
+> never depend on your event loop being alive. (The HTTP layer is still
+> [~2× Express and on par with Fastify](#benchmarks) — see below.)
 
 ## Sixty seconds of ZenZip
 
@@ -49,7 +51,10 @@ import { zenzip, tool, anthropic } from "zenzip";
 const app = zenzip(); // embedded SQLite store, zero config
 
 // ── Durable queue: throw = retry with backoff → dead-letter queue ─────────
-const emails = app.queue("emails", { concurrency: 10, retries: 5 });
+const emails = app.queue("emails", {
+  concurrency: { limit: 5, key: (d) => d.tenantId }, // per-tenant fairness
+  retries: 5,
+});
 emails.process(async (job) => smtp.send(job.data));
 
 // ── Persisted schedule: survives restarts, timezone-aware ─────────────────
@@ -92,59 +97,145 @@ await order.trigger({ orderId: "o_42" }, { idempotencyKey: "o_42" });
 const reply = await support.run("My order is late!", { sessionId: "cus_7" });
 ```
 
-Kill the process anywhere in there — jobs redeliver, the sleeping workflow
+**Kill the process anywhere in there** — jobs redeliver, the sleeping workflow
 wakes on schedule in the new process, the agent resumes mid-conversation
 without re-calling the model for completed steps.
 
+## What makes it different
+
+- **One engine, every primitive.** A queue job is leased retryable work; a
+  schedule fires onto a hidden queue; a workflow run is a job whose handler
+  drives a step journal; an agent is a workflow with dynamically-generated
+  steps. Crash recovery is implemented **once** and inherited everywhere.
+- **Step memoization, not replay.** The Inngest model, not Temporal's — there
+  are *no determinism rules outside steps*. Write normal code; only `step.run`
+  boundaries are journaled. A retried attempt fast-forwards over completed
+  steps instead of re-executing them.
+- **Durable AI agents that don't re-bill you.** When a tool fails and the loop
+  retries, the LLM is **not re-prompted** for already-completed steps — asserted
+  by a test that fails a tool twice and proves the model is called exactly twice.
+- **Zero infrastructure → Postgres with one line.** Embedded SQLite (WAL) by
+  default; flip to `{ store: { driver: "postgres", url } }` for multi-node. Same
+  API, same semantics.
+
 ## Features
 
-- **Queues** — at-least-once delivery, leases, exponential backoff + jitter,
-  priorities, delays, token-bucket rate limits, batch consumers, DLQ with
-  one-call requeue, graceful drain.
-- **Schedules** — cron + intervals, IANA timezones, persisted next-fire,
-  overlap policies (skip/queue/allow), missed-tick catch-up
-  (skip/runOnce/all), per-fire jitter.
-- **Workflows** — step-memoized durable execution (the Inngest model, not
-  Temporal replay — no determinism rules outside steps): `step.run`,
-  `step.sleep`, `step.waitForEvent` (+ match predicates), `step.invoke`
-  (child workflows), `step.all` (parallel with independent memoization),
-  idempotency keys, cancellation trees, content-hash version pinning.
-- **Events** — atomic outbox: one transaction persists the event, wakes
-  matching waiters, and creates `on:`-triggered runs. Wildcard patterns
-  (`user.*`, `billing.**`), ephemeral `app.on()` subscribers.
-- **State machines** — persisted, transition-validated; transition + history
-  + emitted event + triggered runs commit atomically.
-- **Agents** — LLM loops compiled to dynamic workflow steps: tool failures
-  retry **without re-prompting the model** (asserted by test), durable
-  human-approval gates, session memory, multi-agent handoff, structured
-  output, streaming, token accounting. Anthropic + OpenAI-compatible +
-  scripted mock providers.
-- **HTTP** — minimal adapter (`app.get/post/...` + `listen()`), webhook→workflow
-  sugar (`{ http: "POST /hooks/stripe" }`), `app.toNodeHandler()` to mount
-  into any existing server.
-- **Observability** — embedded live dashboard (SSE): run timelines with step
-  graphs, queue health + DLQ requeue, schedules, event feed, engine metrics;
-  optional auth token. Structured logs from the Rust core into your logger.
-- **Multi-node** — `store: { driver: "postgres", url }`: SKIP LOCKED claims,
-  LISTEN/NOTIFY cross-node wakeups, CAS scheduler election, lease-based
-  dead-node recovery. Same API.
+### Core durability
+- **Queues** — at-least-once delivery, leases + fencing tokens, exponential
+  backoff + jitter, priorities, delays, batch consumers, dead-letter queue with
+  one-call requeue/purge, graceful drain.
+- **Flow control** — per-key / per-tenant concurrency limits, round-robin
+  **fairness** across keys, **debounce** (collapse rapid same-key pushes),
+  **throttle** (smooth starts to a steady per-key rate), token-bucket rate
+  limits, and **backpressure** (bounded enqueue / admission control).
+- **Schedules** — cron + intervals, IANA timezones, persisted next-fire, overlap
+  policies (skip/queue/allow), missed-tick catch-up (skip/runOnce/all), jitter.
+- **Workflows** — step-memoized durable execution: `step.run` (with per-step
+  timeout), `step.sleep`, `step.waitForEvent` (+ match predicates), `step.invoke`
+  (child workflows), `step.all` (parallel, independently memoized), idempotency
+  keys, cancellation trees, content-hash **version pinning + routing** so
+  in-flight runs finish on old logic while new runs use new code.
+- **Events** — atomic outbox: one transaction persists the event, wakes matching
+  waiters, and creates `on:`-triggered runs. Wildcards (`user.*`, `billing.**`),
+  ephemeral `app.on()` subscribers.
+- **State machines** — persisted, transition-validated; transition + history +
+  emitted event + triggered runs commit atomically.
+
+### AI-native
+- **Agents** — LLM loops compiled to dynamic workflow steps: tool failures retry
+  **without re-prompting the model**, durable human-approval gates, session
+  memory, multi-agent handoff, structured output, streaming, token accounting +
+  cost tables. Anthropic + OpenAI-compatible + scripted mock providers.
+- **MCP, both directions** — consume external MCP servers as agent tools
+  (`mcp(url)`), and expose your workflows/agents *as* an MCP server
+  (`app.mcpServer()`) for other agents to call.
+- **Large-payload offload** — step results over a threshold are transparently
+  written to a blob store and replaced in the journal by a reference; replay
+  rehydrates the real value.
+
+### HTTP & DX (the adoption wedge)
+- **Express-compatible** — `app.use()` middleware (global / path-scoped / 4-arg
+  error), `Router()` mounting, dual `(req,res,next)` **or** rich-`ctx` handlers
+  chosen by arity, built-in middleware (`json`, `cors`, `logger`, `serveStatic`,
+  `auth`, `validate`, `secureHeaders`, `rateLimit`). A **radix-tree router** and
+  body-read fast path keep it fast (see [benchmarks](#benchmarks)).
+- **Adapters** — `app.toNodeHandler()` to mount into any `node:http` server,
+  `app.toFetchHandler()` for Next.js route handlers / Hono / Bun / Deno / edge.
+- **Webhook → workflow** sugar: `{ http: "POST /hooks/stripe" }`.
+
+### Operations & security
+- **Embedded live dashboard** (SSE) — run timelines with step graphs, queue
+  health + DLQ requeue, schedules, event feed, engine metrics; operator vs
+  read-only **RBAC** tokens.
+- **Retention + GC** — terminal runs/steps and old events are swept on a
+  schedule so the store never grows unbounded (Postgres reclaims via partition
+  drops, not row-by-row deletes).
+- **Health** — `/healthz` (liveness, zero I/O) + `/readyz` (DB-checked
+  readiness); orphaned-run detection.
+- **Payload encryption at rest** — opt-in `encryptionKey` → AES-256-GCM on job
+  payloads, run inputs/outputs, step results, and event payloads. Transparent to
+  enable on an existing DB.
+- **Hardening** — SSRF allowlists on user-controlled fetches, fencing tokens
+  against zombie workers, clock-skew-safe leases on multi-node, realtime run
+  subscription API, idempotency helpers, graceful HTTP drain.
+
+### Multi-node
+- **Postgres backend** — windowed/`SKIP LOCKED` claims, `LISTEN/NOTIFY`
+  cross-node wakeups, advisory-lock scheduler election, lease-based dead-node
+  recovery, event-outbox **range partitioning** for scale. Same API as embedded.
+
+## Benchmarks
+
+Same-machine numbers (i5-1135G7, Node 22) — **relative signals, not marketing
+claims**. Reproduce with `pnpm bench:*`. Full methodology + caveats:
+[`docs/content/spike-results.md`](docs/content/spike-results.md).
+
+**HTTP throughput — identical handlers, ZenZip vs Express 5 vs Fastify** (req/s, best-of):
+
+| Scenario | Express 5 | Fastify | ZenZip | vs Express | vs Fastify |
+|---|--:|--:|--:|--:|--:|
+| `GET /` | 6,344 | 17,554 | **15,749** | 2.48× | 0.90× |
+| `GET /json` | 6,144 | 16,527 | **15,002** | 2.44× | 0.91× |
+| `GET /users/:id` | 5,977 | 16,600 | **16,216** | 2.71× | 0.98× |
+| `POST /echo` | 4,724 | 8,787 | **8,441** | 1.79× | 0.96× |
+| `GET /mw + CORS` | 6,266 | 16,615 | **13,932** | 2.22× | 0.84× |
+
+ZenZip's HTTP layer is **1.8–2.7× Express** and **on par with Fastify** — even
+though HTTP is a thin `node:http` adapter, not the product. You adopt ZenZip for
+the durable engine; the adapter being this fast means migrating costs you
+nothing on the request path. `pnpm bench:compare`.
+
+**The engine, measured (Phase 0 — these numbers shaped the design):**
+
+| What | Result |
+|---|---|
+| JS→Rust sync call (push/emit/recordStep) | **14–34 ns** |
+| JS→Rust **async** call (banned on hot paths) | 85 µs (~2,500×) |
+| Rust→JS handler dispatch, pipelined ×256 | **408k/s** (2.4 µs amortized) |
+| SQLite insert (1k/txn) | **209k jobs/s** |
+| SQLite claim+ack (worst case, 2 commits/job) | 9.8k jobs/s |
+| Postgres dequeue with priority index (80k-row queue) | **53.5 ms → 0.83 ms** (~60×) |
+
+The async-NAPI measurement is why hot-path boundary calls are synchronous; the
+HTTP measurement is why there is no Rust HTTP server.
 
 ## Reliability, tested
 
-This repo's CI doesn't just unit-test — it kills things:
+CI doesn't just unit-test — it **kills things**:
 
-- a worker process is **SIGKILLed mid-job**; the job must redeliver with the
-  attempt counted
-- a workflow worker is SIGKILLed at **four random points mid-run** and
-  respawned; the run must complete with the correct output and no lost steps
-- a **3-node Postgres cluster** has a node hard-killed mid-burst; all 150
-  jobs must complete with duplicates bounded by the dead node's in-flight
-- two nodes share one schedule; ticks must fire **exactly once**
-- a flaky agent tool fails twice; the LLM must be called **exactly twice**,
-  not four times
+- a worker is **SIGKILLed mid-job** → the job redelivers with the attempt counted;
+- a workflow worker is SIGKILLed at **four random points mid-run** and respawned
+  → the run completes with the correct output and no lost or duplicated steps;
+- a **3-node Postgres cluster** has a node hard-killed mid-burst → all jobs
+  complete, duplicates bounded by the dead node's in-flight lease;
+- two nodes share one schedule → ticks fire **exactly once**;
+- a flaky agent tool fails twice → the LLM is called **exactly twice**, not four times;
+- a `+1h`-skewed sweeper clock → **does not** expire a valid lease (clock-skew safety);
+- a zombie worker's late write after lease loss → **rejected** by its stale fence;
+- with `encryptionKey` set → the secret payload appears in **no** on-disk file.
 
-Delivery semantics, versioning rules, and the idempotency guide live in
-[docs/content/workflow-semantics.md](docs/content/workflow-semantics.md).
+Delivery semantics, versioning rules, and the idempotency guide:
+[`docs/content/workflow-semantics.md`](docs/content/workflow-semantics.md).
 
 ## Architecture
 
@@ -152,31 +243,35 @@ Delivery semantics, versioning rules, and the idempotency guide live in
 ┌─────────────────────────────────────────────────────┐
 │  TypeScript API  (npm: zenzip)                       │
 │  queues · schedules · workflows · agents · events    │
-│  machines · http · dashboard                         │
+│  machines · http/express · dashboard · MCP           │
 └──────────────────────┬──────────────────────────────┘
-                       │ napi-rs v3 — sync calls on hot paths (14–34ns),
+                       │ napi-rs v3 — sync calls on hot paths (14–34 ns),
                        │ pipelined ThreadsafeFunction handler dispatch
 ┌──────────────────────▼──────────────────────────────┐
 │  Rust core (own tokio runtime — your event loop      │
 │  only ever runs YOUR handlers)                       │
 │  queue engine · scheduler · workflow engine ·        │
-│  event outbox · machines · sweepers · metrics        │
+│  event outbox · machines · sweepers · GC · metrics · │
+│  AES-256-GCM payload crypto                          │
 └──────────────────────┬──────────────────────────────┘
                        │ Store trait
         ┌──────────────┴───────────────┐
         ▼                              ▼
   SQLite (WAL)                  PostgreSQL
-  embedded default              multi-node: SKIP LOCKED,
-  zero config                   LISTEN/NOTIFY, CAS election
+  embedded default              multi-node: SKIP LOCKED, LISTEN/NOTIFY,
+  zero config                   advisory-lock election, range partitioning
 ```
 
-Every feature is a projection of one engine: a queue job is leased retryable
-work; a schedule fires onto a hidden queue; a workflow run is a job whose
-handler drives the step journal; an agent is a workflow with dynamic steps.
-Crash recovery is implemented once and inherited everywhere.
-
 Design decisions (D1–D8) with the measurements behind them:
-[docs/content/plan.md](docs/content/plan.md).
+[`docs/content/plan.md`](docs/content/plan.md).
+
+## Documentation
+
+The docs site (Next.js, in `docs/` — `npm run dev`) covers every feature:
+introduction, quickstart, concepts, architecture, durability & semantics,
+queues, schedules, workflows, agents, events, state machines, HTTP & dashboard,
+Express & middleware, configuration, migrating from Express/Fastify,
+comparisons, benchmarks, and the roadmap.
 
 ## Project status
 
@@ -188,21 +283,24 @@ Design decisions (D1–D8) with the measurements behind them:
 | 3 | Events, state machines, HTTP, dashboard | ✅ |
 | 4 | Agent engine | ✅ |
 | 5 | Postgres multi-node | ✅ |
-| 6 | DX & launch: `create-zenzip-app`, npm prebuilds, docs polish | 🔜 |
+| 7 | Production hardening (retention, health, fencing, clock-skew, SSRF, RBAC, **encryption at rest**, idempotency) | ✅ mostly |
+| 8 | Express-native DX layer (middleware, routers, adapters) | ✅ |
+| 9 | AI depth (large-payload offload, MCP both ways, realtime subscribe) | ✅ |
+| 10 | Flow control & scale (per-key concurrency, fairness, debounce, throttle, PG partitioning, radix router, benchmarks) | ✅ |
+| 6 / 11+ | Launch packaging, modular split, realtime/WebSocket layer | 🔜 |
 
-Full task ledger: [docs/content/tasks.md](docs/content/tasks.md) ·
-Roadmap with notes: the docs site (`docs/`, Next.js — `npm run dev`).
+Full task ledger: [`docs/content/tasks.md`](docs/content/tasks.md).
 
 ## Repository layout
 
 ```text
 crates/zenzip-core/     Rust engine: store trait, SQLite + Postgres impls,
-                        queue/scheduler/workflow engines, event outbox
+                        queue/scheduler/workflow engines, event outbox, crypto
 packages/core-native/   napi-rs bridge crate + npm package (@zenzip/core-native)
 packages/zenzip/        Public TypeScript API (npm: zenzip)
-bench/                  Phase 0 boundary/throughput benchmarks (reproducible)
+bench/                  Reproducible benchmarks (boundary, sqlite, http, compare)
 examples/               email-queue · demo-dashboard · support-agent
-docs/                   Documentation site (Next.js) — guides live in docs/content/
+docs/                   Documentation site (Next.js); guides in docs/content/
 ```
 
 ## Development
@@ -214,9 +312,10 @@ Requires **Rust stable**, **Node 18+**, **pnpm**. Postgres tests need a server
 pnpm install
 pnpm build              # cargo + napi build (release) + TypeScript
 
-cargo test --workspace            # 33 Rust tests (incl. PG multi-node if reachable)
-pnpm --filter zenzip test         # 49 TS tests (queues/workflows/agents/chaos/…)
+cargo test --workspace            # Rust tests (incl. PG multi-node if reachable)
+pnpm --filter zenzip test         # TypeScript tests (queues/workflows/agents/chaos/…)
 
+pnpm bench:compare      # ZenZip vs Express vs Fastify, identical handlers
 pnpm bench:boundary     # JS↔Rust call costs
 pnpm bench:sqlite       # store throughput
 pnpm bench:http         # the benchmark that killed our Rust HTTP server
@@ -226,10 +325,9 @@ pnpm --filter @zenzip/example-support-agent start    # agent demo (offline mock;
                                                      # set ANTHROPIC_API_KEY for Claude)
 ```
 
-Standing rules: CI green on win/mac/linux before merge; every feature lands
-with tests (crash-safety where applicable) and docs; benchmark regressions
->10% block merge; `docs/content/plan.md` follows the code, never silently
-diverges.
+Standing rules: CI green on win/mac/linux before merge; every feature lands with
+tests (crash-safety where applicable) and docs; benchmark regressions >10% block
+merge; the plan follows the code, never silently diverges.
 
 ## License
 

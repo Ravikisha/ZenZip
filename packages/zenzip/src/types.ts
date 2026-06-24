@@ -71,6 +71,16 @@ export interface ZenzipOptions {
     /** Blob backend. Default: filesystem under the data dir. */
     store?: BlobStore;
   };
+  /**
+   * Payload encryption at rest (P7.15), opt-in. When set, job payloads, run
+   * inputs/outputs, step results, and event payloads are AES-256-GCM encrypted
+   * before they touch storage and decrypted on read — the engine only holds
+   * plaintext in memory. The key is any-length secret (load it from an env var
+   * or secret manager, never hard-code). Enabling it on an existing database is
+   * transparent: legacy plaintext rows stay readable, new writes are encrypted.
+   * Losing the key makes encrypted payloads unrecoverable.
+   */
+  encryptionKey?: string;
 }
 
 /** Rows removed by a retention GC pass (P7.6). */

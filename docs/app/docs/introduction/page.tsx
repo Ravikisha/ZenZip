@@ -184,13 +184,33 @@ export default function Page() {
         head={["Phase", "Scope", "Status"]}
         rows={[
           ["0", "NAPI boundary + storage benchmarks", "✅ complete"],
-          ["1", "Queues, scheduler, runtime shell", "✅ complete — 17 JS + 14 Rust tests"],
+          ["1", "Queues, scheduler, runtime shell", "✅ complete"],
           ["2", "Durable workflow engine", "✅ complete — chaos-tested, step API frozen"],
-          ["3", "Event bus, state machines, HTTP adapter, dashboard", "🔜 next"],
-          ["4", "Agent engine", "planned"],
-          ["5", "Postgres multi-node", "planned"],
+          ["3", "Event bus, state machines, HTTP adapter, dashboard", "✅ complete"],
+          ["4", "Agent engine", "✅ complete"],
+          ["5", "Postgres multi-node", "✅ complete — 3-node chaos-tested"],
+          [
+            "7",
+            "Production hardening: retention/GC, health, fencing, clock-skew, SSRF, RBAC, payload encryption at rest, idempotency",
+            "✅ mostly (SLSA-signed releases remain)",
+          ],
+          ["8", "Express-native DX: middleware, routers, node + fetch adapters", "✅ complete"],
+          ["9", "AI depth: large-payload offload, MCP both directions, realtime subscribe", "✅ complete"],
+          [
+            "10",
+            "Flow control & scale: per-key concurrency, fairness, debounce, throttle, PG partitioning, radix router",
+            "✅ complete",
+          ],
+          ["6 / 11+", "Launch packaging, modular split, realtime/WebSocket layer", "🔜 in progress"],
         ]}
       />
+      <P>
+        The engine and full API are <Strong>feature-complete against the
+        plan</Strong> and covered by <Strong>190+ tests</Strong> (53 Rust + 138
+        TypeScript), including SIGKILL crash-injection and multi-node Postgres
+        chaos suites. What remains is launch ceremony — npm prebuild publishing,
+        the modular package split, and the realtime/WebSocket layer.
+      </P>
       <P>
         The <A href="/docs/roadmap">roadmap</A> tracks every task. The{" "}
         <A href="/docs/benchmarks">benchmarks page</A> shows the measurements

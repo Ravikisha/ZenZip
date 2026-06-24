@@ -21,13 +21,19 @@ use sqlx::{Executor, Postgres, Row, Transaction};
 use tokio::runtime::Handle;
 
 use crate::store::{
-    workflow_execution_job, ClaimedJob, DeadJob, EmitOutcome, EventRow, MachineHistoryRow, NewRun,
-    PushJob, QueueStat, RunRow, ScheduleRow, StepEntry, StepRow, Store, StoreError, StoreResult,
-    TriggerTarget, TriggeredRun, Waiter,
+    workflow_execution_job, ClaimedJob, DeadJob, EmitOutcome, EventRow, GcStats, MachineHistoryRow,
+    NewRun, PushJob, QueueStat, RunRow, ScheduleRow, StepEntry, StepRow, Store, StoreError,
+    StoreResult, TriggerTarget, TriggeredRun, Waiter,
 };
+use crate::crypto::Crypto;
 use crate::time::now_ms;
 
 pub const WAKE_CHANNEL: &str = "zenzip_wake";
+
+/// Postgres server time in epoch-ms. Used for lease set/expiry decisions so a
+/// skewed worker/node wall clock can't mis-set or prematurely expire a lease —
+/// every node reads the same authority, the database (P7.12).
+const DB_NOW: &str = "(EXTRACT(EPOCH FROM now()) * 1000)::BIGINT";
 
 const MIGRATIONS: &[&str] = &[
     // v1 — full schema (no legacy to migrate from)
@@ -123,7 +129,57 @@ const MIGRATIONS: &[&str] = &[
         updated_at  BIGINT NOT NULL,
         PRIMARY KEY (agent, id)
     );",
+    // v2 — retention GC (P7.6): index terminal runs by recency so the sweep
+    // ranges over an index instead of scanning the whole runs table.
+    "CREATE INDEX idx_runs_gc ON runs (status, updated_at);",
+    // v3 — fencing tokens (P7.11): monotonic per-job counter bumped on claim;
+    // ack/fail/renew are guarded by it so a zombie worker's late write fails.
+    "ALTER TABLE jobs ADD COLUMN fence BIGINT NOT NULL DEFAULT 0;",
+    // v4 — per-key concurrency (P10.1): bucket key + index for keyed claims.
+    "ALTER TABLE jobs ADD COLUMN concurrency_key TEXT;
+     CREATE INDEX idx_jobs_ckey ON jobs (queue, concurrency_key, status);",
+    // v5 — debounce (P10.2): bucket key + index for collapse-on-push.
+    "ALTER TABLE jobs ADD COLUMN debounce_key TEXT;
+     CREATE INDEX idx_jobs_debounce ON jobs (queue, debounce_key, status);",
+    // v6 — throttle (P10.2): per-key cursor of the next allowed start time.
+    "CREATE TABLE throttle_cursors (
+        queue    TEXT NOT NULL,
+        tkey     TEXT NOT NULL,
+        next_at  BIGINT NOT NULL,
+        PRIMARY KEY (queue, tkey)
+    );",
+    // v7 — event outbox partitioning (P10.4): RANGE-partition events by
+    // emitted_at into fixed-width (EVENT_PARTITION_MS) buckets so retention GC
+    // can DROP whole aged partitions (instant) instead of a row-by-row DELETE
+    // at scale, and per-partition indexes stay small. The PK must include the
+    // partition key, so it becomes (emitted_at, id). A DEFAULT partition
+    // catches any row whose time bucket was not pre-created (correctness floor;
+    // such rows are GC'd by DELETE, just not droppable). Index recreated after
+    // the legacy table is dropped so the name is free.
+    "ALTER TABLE events RENAME TO events_legacy;
+     CREATE TABLE events (
+        id          TEXT NOT NULL,
+        name        TEXT NOT NULL,
+        payload     TEXT NOT NULL,
+        emitted_at  BIGINT NOT NULL,
+        PRIMARY KEY (emitted_at, id)
+     ) PARTITION BY RANGE (emitted_at);
+     CREATE TABLE events_default PARTITION OF events DEFAULT;
+     INSERT INTO events (id, name, payload, emitted_at)
+        SELECT id, name, payload, emitted_at FROM events_legacy;
+     DROP TABLE events_legacy;
+     CREATE INDEX idx_events_time ON events (emitted_at DESC);",
+    // v8 — ready-jobs index (P10.4): priority-ordered partial index over
+    // claimable rows lets the non-windowed claim walk jobs in dispatch order
+    // (queue + priority) and stop at LIMIT without a Sort node.
+    "CREATE INDEX idx_jobs_ready ON jobs (queue, priority DESC, id) WHERE status = 0;",
 ];
+
+/// Width of an event-outbox time partition, in ms (P10.4). One day: large
+/// enough that partition churn is trivial, small enough that retention drops
+/// reclaim space promptly. Arithmetic buckets (floor(emitted_at / W)) avoid any
+/// calendar math.
+const EVENT_PARTITION_MS: i64 = 86_400_000;
 
 fn pg_err(e: sqlx::Error) -> StoreError {
     StoreError::Other(format!("postgres: {e}"))
@@ -149,18 +205,38 @@ pub struct PgStore {
     pool: PgPool,
     /// Engine runtime handle — bridges *_blocking calls (JS thread only).
     handle: Handle,
+    /// Payload-at-rest cipher (P7.15). Passthrough unless a key is configured.
+    crypto: Crypto,
 }
 
 impl PgStore {
     /// Connect + migrate. Blocks the calling (JS) thread on the handshake.
     pub fn open(handle: Handle, url: &str) -> StoreResult<Self> {
+        Self::open_with(handle, url, Crypto::disabled())
+    }
+
+    /// Connect + migrate with payload encryption (P7.15). Passthrough when the
+    /// cipher carries no key, so this is also the plain path.
+    pub fn open_with(handle: Handle, url: &str, crypto: Crypto) -> StoreResult<Self> {
         let url = url.to_string();
         let pool = block_anywhere(&handle, async {
             let pool = PgPoolOptions::new()
                 .max_connections(8)
+                // Resilience (P15.4): fail fast when the pool is exhausted or
+                // PG is unreachable instead of hanging the caller; recycle
+                // connections so a post-failover stale socket is replaced.
+                .acquire_timeout(std::time::Duration::from_secs(10))
+                .idle_timeout(Some(std::time::Duration::from_secs(300)))
+                .max_lifetime(Some(std::time::Duration::from_secs(1800)))
+                .test_before_acquire(true)
                 .after_connect(|conn, _meta| {
                     Box::pin(async move {
                         conn.execute("SET search_path TO zenzip, public").await?;
+                        // Bound runaway queries so one can't pin a connection
+                        // forever (generous — well above normal claim/GC ops).
+                        conn.execute("SET statement_timeout = '120s'").await?;
+                        conn.execute("SET idle_in_transaction_session_timeout = '60s'")
+                            .await?;
                         Ok(())
                     })
                 })
@@ -170,7 +246,11 @@ impl PgStore {
             Ok::<_, sqlx::Error>(pool)
         })
         .map_err(pg_err)?;
-        Ok(Self { pool, handle })
+        let store = Self { pool, handle, crypto };
+        // Create the current/next event partitions before any emit (P10.4), so
+        // they land in droppable partitions instead of the DEFAULT catch-all.
+        let _ = store.block(store.ensure_event_partitions(now_ms()));
+        Ok(store)
     }
 
     fn block<T: Send>(
@@ -180,24 +260,119 @@ impl PgStore {
         block_anywhere(&self.handle, fut)
     }
 
+    /// Ensure the current and next event time-partitions exist (P10.4).
+    /// Best-effort and idempotent: called at open and before each GC sweep so
+    /// live emits land in droppable partitions. Any failure (a concurrent
+    /// creator, or pre-existing rows in the default partition for this range)
+    /// is non-fatal — the row simply falls back to the DEFAULT partition.
+    async fn ensure_event_partitions(&self, now: i64) -> StoreResult<()> {
+        let w = EVENT_PARTITION_MS;
+        let k0 = now.div_euclid(w);
+        for k in [k0, k0 + 1] {
+            let lo = k * w;
+            let hi = (k + 1) * w;
+            let sql = format!(
+                "CREATE TABLE IF NOT EXISTS zenzip.events_p{k} \
+                 PARTITION OF zenzip.events FOR VALUES FROM ({lo}) TO ({hi})"
+            );
+            // Swallow errors: partitioning is an optimization, not a correctness
+            // requirement — the DEFAULT partition always accepts the row.
+            let _ = sqlx::query(&sql).execute(&self.pool).await;
+        }
+        Ok(())
+    }
+
+    /// Drop every event partition that lies entirely below `before` (P10.4) —
+    /// the fast path for retention GC. Returns the row count removed (counted
+    /// before the drop, so GcStats stays accurate). Rows in the boundary
+    /// partition and the DEFAULT partition are left for the caller's DELETE.
+    async fn drop_aged_event_partitions(
+        tx: &mut Transaction<'_, Postgres>,
+        before: i64,
+    ) -> StoreResult<u64> {
+        let w = EVENT_PARTITION_MS;
+        let rows = sqlx::query(
+            "SELECT c.relname FROM pg_inherits i
+             JOIN pg_class c ON c.oid = i.inhrelid
+             JOIN pg_class p ON p.oid = i.inhparent
+             JOIN pg_namespace n ON n.oid = p.relnamespace
+             WHERE p.relname = 'events' AND n.nspname = 'zenzip'
+               AND c.relname LIKE 'events\\_p%'",
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(pg_err)?;
+        let mut dropped = 0u64;
+        for r in rows {
+            let name: String = r.get(0);
+            let Some(kstr) = name.strip_prefix("events_p") else { continue };
+            let Ok(k) = kstr.parse::<i64>() else { continue };
+            if (k + 1) * w <= before {
+                let n: i64 =
+                    sqlx::query_scalar(&format!("SELECT count(*) FROM zenzip.events_p{k}"))
+                        .fetch_one(&mut **tx)
+                        .await
+                        .map_err(pg_err)?;
+                sqlx::query(&format!("DROP TABLE zenzip.events_p{k}"))
+                    .execute(&mut **tx)
+                    .await
+                    .map_err(pg_err)?;
+                dropped += n as u64;
+            }
+        }
+        Ok(dropped)
+    }
+
     async fn insert_job(
         tx: &mut Transaction<'_, Postgres>,
         job: &PushJob,
         now: i64,
+        crypto: &Crypto,
     ) -> StoreResult<String> {
+        // Debounce (P10.2): collapse — drop any pending same-key job first.
+        if let Some(dk) = &job.debounce_key {
+            sqlx::query("DELETE FROM jobs WHERE queue = $1 AND status = 0 AND debounce_key = $2")
+                .bind(&job.queue)
+                .bind(dk)
+                .execute(&mut **tx)
+                .await
+                .map_err(pg_err)?;
+        }
+        // Throttle (P10.2): atomically advance the per-key cursor and take its
+        // start slot — GREATEST(existing, now) + spacing; start = next_at - spacing.
+        let mut available_at = now + job.delay_ms.max(0);
+        if let (Some(tk), Some(spacing)) = (&job.throttle_key, job.throttle_spacing_ms) {
+            let next_at: i64 = sqlx::query_scalar(
+                "INSERT INTO throttle_cursors (queue, tkey, next_at) VALUES ($1, $2, $3 + $4)
+                 ON CONFLICT (queue, tkey)
+                 DO UPDATE SET next_at = GREATEST(throttle_cursors.next_at, $3) + $4
+                 RETURNING next_at",
+            )
+            .bind(&job.queue)
+            .bind(tk)
+            .bind(now)
+            .bind(spacing.max(0))
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(pg_err)?;
+            available_at = next_at - spacing.max(0);
+        }
         let id = uuid::Uuid::now_v7().to_string();
+        let enc_payload = crypto.enc(&job.payload); // P7.15
         sqlx::query(
             "INSERT INTO jobs (id, queue, payload, status, priority, attempt, max_attempts,
-                               available_at, created_at, updated_at)
-             VALUES ($1, $2, $3, 0, $4, 0, $5, $6, $7, $7)",
+                               available_at, created_at, updated_at, concurrency_key, debounce_key)
+             VALUES ($1, $2, $3, 0, $4, 0, $5, $6, $7, $7, $8, $9)",
         )
         .bind(&id)
         .bind(&job.queue)
-        .bind(&job.payload)
+        .bind(&enc_payload)
         .bind(job.priority)
         .bind(job.max_attempts.max(1) as i32)
-        .bind(now + job.delay_ms.max(0))
+        .bind(available_at)
         .bind(now)
+        .bind(&job.concurrency_key)
+        .bind(&job.debounce_key)
         .execute(&mut **tx)
         .await
         .map_err(pg_err)?;
@@ -216,7 +391,7 @@ impl PgStore {
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
         let mut ids = Vec::with_capacity(jobs.len());
         for job in &jobs {
-            ids.push(Self::insert_job(&mut tx, job, now).await?);
+            ids.push(Self::insert_job(&mut tx, job, now, &self.crypto).await?);
         }
         tx.commit().await.map_err(pg_err)?;
         Ok(ids)
@@ -226,6 +401,7 @@ impl PgStore {
         tx: &mut Transaction<'_, Postgres>,
         run: &NewRun,
         now: i64,
+        crypto: &Crypto,
     ) -> StoreResult<(String, bool)> {
         if let Some(key) = &run.idempotency_key {
             let existing: Option<String> = sqlx::query_scalar(
@@ -241,6 +417,7 @@ impl PgStore {
             }
         }
         let id = uuid::Uuid::now_v7().to_string();
+        let enc_input = crypto.enc(&run.input); // P7.15
         let inserted = sqlx::query(
             "INSERT INTO runs (id, workflow, status, input, version, idempotency_key,
                                parent_run_id, parent_step_id, created_at, updated_at)
@@ -249,7 +426,7 @@ impl PgStore {
         )
         .bind(&id)
         .bind(&run.workflow)
-        .bind(&run.input)
+        .bind(&enc_input)
         .bind(&run.version)
         .bind(&run.idempotency_key)
         .bind(&run.parent_run_id)
@@ -280,7 +457,9 @@ impl PgStore {
         kind: &str,
         result: Option<&str>,
         now: i64,
+        crypto: &Crypto,
     ) -> StoreResult<()> {
+        let enc_result = result.map(|r| crypto.enc(r)); // P7.15
         sqlx::query(
             "INSERT INTO steps (run_id, step_id, kind, status, result, updated_at)
              VALUES ($1, $2, $3, 1, $4, $5)
@@ -292,7 +471,7 @@ impl PgStore {
         .bind(run_id)
         .bind(step_id)
         .bind(kind)
-        .bind(result)
+        .bind(enc_result.as_deref())
         .bind(now)
         .execute(&mut **tx)
         .await
@@ -307,15 +486,19 @@ impl PgStore {
         payload: &str,
         targets: Vec<TriggerTarget>,
         now: i64,
+        crypto: &Crypto,
     ) -> StoreResult<EmitOutcome> {
         let event_id = uuid::Uuid::now_v7().to_string();
+        // Match predicates run against the in-memory plaintext; only the stored
+        // copy is encrypted (P7.15).
         let payload_value: serde_json::Value =
             serde_json::from_str(payload).unwrap_or(serde_json::Value::Null);
+        let enc_payload = crypto.enc(payload);
 
         sqlx::query("INSERT INTO events (id, name, payload, emitted_at) VALUES ($1, $2, $3, $4)")
             .bind(&event_id)
             .bind(name)
-            .bind(payload)
+            .bind(&enc_payload)
             .bind(now)
             .execute(&mut **tx)
             .await
@@ -356,9 +539,11 @@ impl PgStore {
                 "waitForEvent",
                 Some(&format!(r#"{{"event":{payload}}}"#)),
                 now,
+                crypto,
             )
             .await?;
-            Self::insert_job(tx, &workflow_execution_job(&workflow, &run_id, 0), now).await?;
+            Self::insert_job(tx, &workflow_execution_job(&workflow, &run_id, 0), now, crypto)
+                .await?;
             waiters.push(Waiter {
                 run_id,
                 workflow,
@@ -385,6 +570,7 @@ impl PgStore {
                     parent_step_id: None,
                 },
                 now,
+                crypto,
             )
             .await?;
             if created {
@@ -392,6 +578,7 @@ impl PgStore {
                     tx,
                     &workflow_execution_job(&target.workflow, &run_id, 0),
                     now,
+                    crypto,
                 )
                 .await?;
                 triggered.push(TriggeredRun {
@@ -422,8 +609,8 @@ impl PgStore {
             id: r.get(0),
             workflow: r.get(1),
             status: r.get::<i32, _>(2) as i64,
-            input: r.get(3),
-            output: r.get(4),
+            input: self.crypto.dec(&r.get::<String, _>(3)), // P7.15
+            output: r.get::<Option<String>, _>(4).map(|o| self.crypto.dec(&o)),
             error: r.get(5),
             version: r.get(6),
             parent_run_id: r.get(7),
@@ -473,26 +660,89 @@ impl Store for PgStore {
         self.block(self.push_async(jobs))
     }
 
-    async fn claim(&self, queue: &str, limit: u32, lease_ms: i64) -> StoreResult<Vec<ClaimedJob>> {
+    async fn claim(
+        &self,
+        queue: &str,
+        limit: u32,
+        lease_ms: i64,
+        key_limit: Option<u32>,
+        fair: bool,
+    ) -> StoreResult<Vec<ClaimedJob>> {
         let now = now_ms();
-        let rows = sqlx::query(
-            "UPDATE jobs SET status = 1, attempt = attempt + 1, lease_until = $1, updated_at = $2
-             WHERE id IN (
-                 SELECT id FROM jobs
-                 WHERE queue = $3 AND status = 0 AND available_at <= $2
-                 ORDER BY priority DESC, id ASC
-                 LIMIT $4
-                 FOR UPDATE SKIP LOCKED
-             )
-             RETURNING id, queue, payload, attempt, max_attempts, priority",
-        )
-        .bind(now + lease_ms)
-        .bind(now)
-        .bind(queue)
-        .bind(limit as i64)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(pg_err)?;
+        let rows = if fair || key_limit.is_some() {
+            // Windowed claim (P10.1 key limit and/or P10.3 fairness). SKIP
+            // LOCKED can't combine with the window function, so serialize claims
+            // on this queue with a transaction advisory lock — these queues are
+            // lower-throughput, and this keeps the count/fair-spread exact
+            // across nodes. Non-windowed queues keep the SKIP-LOCKED fast path.
+            let cap = key_limit.map(|k| k as i64).unwrap_or(i64::MAX);
+            // Fairness orders by rank-within-key so the LIMIT round-robins
+            // across groups; otherwise order by id (selection is what matters,
+            // dispatch order is re-sorted below).
+            let order = if fair { "ORDER BY rn ASC, pr DESC, id ASC" } else { "ORDER BY id ASC" };
+            // lease_until from DB server time + duration (P7.12).
+            let sql = format!(
+                "UPDATE jobs SET status = 1, attempt = attempt + 1,
+                                 lease_until = {DB_NOW} + {lease_ms},
+                                 updated_at = $1, fence = fence + 1
+                 WHERE id IN (
+                     SELECT id FROM (
+                         SELECT j.id AS id, j.concurrency_key AS ck, j.priority AS pr,
+                             (SELECT COUNT(*) FROM jobs r
+                              WHERE r.queue = j.queue AND r.status = 1
+                                AND r.concurrency_key = j.concurrency_key)
+                             + ROW_NUMBER() OVER (
+                                 PARTITION BY j.concurrency_key
+                                 ORDER BY j.priority DESC, j.id ASC) AS keyrank,
+                             ROW_NUMBER() OVER (
+                                 PARTITION BY j.concurrency_key
+                                 ORDER BY j.priority DESC, j.id ASC) AS rn
+                         FROM jobs j
+                         WHERE j.queue = $2 AND j.status = 0 AND j.available_at <= $1
+                     ) ranked
+                     WHERE ck IS NULL OR keyrank <= $4
+                     {order}
+                     LIMIT $3
+                 )
+                 RETURNING id, queue, payload, attempt, max_attempts, priority, fence"
+            );
+            let mut tx = self.pool.begin().await.map_err(pg_err)?;
+            sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1)::int8)")
+                .bind(queue)
+                .execute(&mut *tx)
+                .await
+                .map_err(pg_err)?;
+            let rows = sqlx::query(&sql)
+                .bind(now)
+                .bind(queue)
+                .bind(limit as i64)
+                .bind(cap)
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(pg_err)?;
+            tx.commit().await.map_err(pg_err)?;
+            rows
+        } else {
+            sqlx::query(&format!(
+                "UPDATE jobs SET status = 1, attempt = attempt + 1,
+                                 lease_until = {DB_NOW} + {lease_ms}, updated_at = $1,
+                                 fence = fence + 1
+                 WHERE id IN (
+                     SELECT id FROM jobs
+                     WHERE queue = $2 AND status = 0 AND available_at <= $1
+                     ORDER BY priority DESC, id ASC
+                     LIMIT $3
+                     FOR UPDATE SKIP LOCKED
+                 )
+                 RETURNING id, queue, payload, attempt, max_attempts, priority, fence"
+            ))
+            .bind(now)
+            .bind(queue)
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(pg_err)?
+        };
         let mut jobs: Vec<(ClaimedJob, i32)> = rows
             .into_iter()
             .map(|r| {
@@ -500,9 +750,10 @@ impl Store for PgStore {
                     ClaimedJob {
                         id: r.get(0),
                         queue: r.get(1),
-                        payload: r.get(2),
+                        payload: self.crypto.dec(&r.get::<String, _>(2)), // P7.15
                         attempt: r.get::<i32, _>(3) as u32,
                         max_attempts: r.get::<i32, _>(4) as u32,
+                        fence: r.get::<i64, _>(6),
                     },
                     r.get::<i32, _>(5),
                 )
@@ -512,81 +763,146 @@ impl Store for PgStore {
         Ok(jobs.into_iter().map(|(job, _)| job).collect())
     }
 
-    async fn ack(&self, id: &str) -> StoreResult<()> {
-        sqlx::query("DELETE FROM jobs WHERE id = $1")
+    async fn ack(&self, id: &str, fence: i64) -> StoreResult<()> {
+        sqlx::query("DELETE FROM jobs WHERE id = $1 AND fence = $2")
             .bind(id)
+            .bind(fence)
             .execute(&self.pool)
             .await
             .map_err(pg_err)?;
         Ok(())
     }
 
-    async fn fail_retry(&self, id: &str, error: &str, available_at: i64) -> StoreResult<()> {
+    async fn fail_retry(
+        &self,
+        id: &str,
+        error: &str,
+        available_at: i64,
+        fence: i64,
+    ) -> StoreResult<()> {
         sqlx::query(
             "UPDATE jobs SET status = 0, available_at = $1, last_error = $2,
                              lease_until = NULL, updated_at = $3
-             WHERE id = $4",
+             WHERE id = $4 AND fence = $5",
         )
         .bind(available_at)
         .bind(error)
         .bind(now_ms())
         .bind(id)
+        .bind(fence)
         .execute(&self.pool)
         .await
         .map_err(pg_err)?;
         Ok(())
     }
 
-    async fn fail_dead(&self, id: &str, error: &str) -> StoreResult<()> {
+    async fn fail_dead(&self, id: &str, error: &str, fence: i64) -> StoreResult<()> {
         sqlx::query(
             "UPDATE jobs SET status = 3, last_error = $1, lease_until = NULL, updated_at = $2
-             WHERE id = $3",
+             WHERE id = $3 AND fence = $4",
         )
         .bind(error)
         .bind(now_ms())
         .bind(id)
+        .bind(fence)
         .execute(&self.pool)
         .await
         .map_err(pg_err)?;
         Ok(())
     }
 
-    async fn renew_leases(&self, ids: Vec<String>, lease_until: i64) -> StoreResult<()> {
-        sqlx::query(
-            "UPDATE jobs SET lease_until = $1, updated_at = $2
-             WHERE id = ANY($3) AND status = 1",
-        )
-        .bind(lease_until)
-        .bind(now_ms())
-        .bind(&ids)
-        .execute(&self.pool)
-        .await
-        .map_err(pg_err)?;
+    async fn renew_leases(&self, leases: Vec<(String, i64)>, lease_ms: i64) -> StoreResult<()> {
+        let (ids, fences): (Vec<String>, Vec<i64>) = leases.into_iter().unzip();
+        // lease_until from DB server time + duration (P7.12).
+        let sql = format!(
+            "UPDATE jobs SET lease_until = {DB_NOW} + $1, updated_at = {DB_NOW}
+             WHERE status = 1 AND (id, fence) IN (
+                 SELECT u.id, u.fence FROM unnest($2::text[], $3::bigint[]) AS u(id, fence)
+             )"
+        );
+        sqlx::query(&sql)
+            .bind(lease_ms)
+            .bind(&ids)
+            .bind(&fences)
+            .execute(&self.pool)
+            .await
+            .map_err(pg_err)?;
+        Ok(())
+    }
+
+    async fn ping(&self) -> StoreResult<()> {
+        sqlx::query("SELECT 1")
+            .execute(&self.pool)
+            .await
+            .map_err(pg_err)?;
         Ok(())
     }
 
     async fn sweep_expired(&self, now: i64) -> StoreResult<u64> {
-        let dead = sqlx::query(
+        // Expire by DB server time, not the sweeper's wall clock (P7.12) — a
+        // skewed sweeper node can't prematurely expire another node's leases.
+        let dead = sqlx::query(&format!(
             "UPDATE jobs SET status = 3, lease_until = NULL,
                              last_error = COALESCE(last_error, 'lease expired'),
                              updated_at = $1
-             WHERE status = 1 AND lease_until < $1 AND attempt >= max_attempts",
-        )
+             WHERE status = 1 AND lease_until < {DB_NOW} AND attempt >= max_attempts"
+        ))
         .bind(now)
         .execute(&self.pool)
         .await
         .map_err(pg_err)?
         .rows_affected();
-        let retried = sqlx::query(
+        let retried = sqlx::query(&format!(
             "UPDATE jobs SET status = 0, lease_until = NULL, available_at = $1, updated_at = $1
-             WHERE status = 1 AND lease_until < $1",
-        )
+             WHERE status = 1 AND lease_until < {DB_NOW}"
+        ))
         .bind(now)
         .execute(&self.pool)
         .await
         .map_err(pg_err)?
         .rows_affected();
         Ok(dead + retried)
+    }
+
+    async fn gc(&self, run_before: Option<i64>, event_before: Option<i64>) -> StoreResult<GcStats> {
+        // Keep the upcoming event time-partitions present (P10.4) so live emits
+        // land in droppable partitions rather than the catch-all DEFAULT.
+        let _ = self.ensure_event_partitions(now_ms()).await;
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        let mut stats = GcStats::default();
+        if let Some(before) = run_before {
+            stats.steps = sqlx::query(
+                "DELETE FROM steps WHERE run_id IN (
+                    SELECT id FROM runs WHERE status IN (4, 5, 6) AND updated_at < $1)",
+            )
+            .bind(before)
+            .execute(&mut *tx)
+            .await
+            .map_err(pg_err)?
+            .rows_affected();
+            stats.runs = sqlx::query(
+                "DELETE FROM runs WHERE status IN (4, 5, 6) AND updated_at < $1",
+            )
+            .bind(before)
+            .execute(&mut *tx)
+            .await
+            .map_err(pg_err)?
+            .rows_affected();
+        }
+        if let Some(before) = event_before {
+            // Drop fully-aged partitions wholesale (instant), then mop up the
+            // boundary partition + DEFAULT with a bounded row delete (P10.4).
+            let dropped = Self::drop_aged_event_partitions(&mut tx, before).await?;
+            let deleted = sqlx::query("DELETE FROM events WHERE emitted_at < $1")
+                .bind(before)
+                .execute(&mut *tx)
+                .await
+                .map_err(pg_err)?
+                .rows_affected();
+            stats.events = dropped + deleted;
+        }
+        tx.commit().await.map_err(pg_err)?;
+        Ok(stats)
     }
 
     async fn pending_count(&self, queue: &str) -> StoreResult<u64> {
@@ -624,7 +940,7 @@ impl Store for PgStore {
             .map(|r| DeadJob {
                 id: r.get(0),
                 queue: r.get(1),
-                payload: r.get(2),
+                payload: self.crypto.dec(&r.get::<String, _>(2)), // P7.15
                 attempt: r.get::<i32, _>(3) as u32,
                 last_error: r.get(4),
                 created_at: r.get(5),
@@ -648,10 +964,19 @@ impl Store for PgStore {
         Ok(changed)
     }
 
+    async fn purge_dead(&self, queue: &str) -> StoreResult<u64> {
+        Ok(sqlx::query("DELETE FROM jobs WHERE queue = $1 AND status = 3")
+            .bind(queue)
+            .execute(&self.pool)
+            .await
+            .map_err(pg_err)?
+            .rows_affected())
+    }
+
     async fn create_run(&self, run: NewRun) -> StoreResult<(String, bool)> {
         let now = now_ms();
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
-        let result = Self::create_run_in_tx(&mut tx, &run, now).await?;
+        let result = Self::create_run_in_tx(&mut tx, &run, now, &self.crypto).await?;
         tx.commit().await.map_err(pg_err)?;
         Ok(result)
     }
@@ -680,7 +1005,7 @@ impl Store for PgStore {
             .map(|r| StepEntry {
                 id: r.get(0),
                 kind: r.get(1),
-                result: r.get(2),
+                result: r.get::<Option<String>, _>(2).map(|v| self.crypto.dec(&v)), // P7.15
             })
             .collect())
     }
@@ -693,8 +1018,16 @@ impl Store for PgStore {
         result: Option<String>,
     ) -> StoreResult<()> {
         let mut tx = self.pool.begin().await.map_err(pg_err)?;
-        Self::record_step_in_tx(&mut tx, run_id, step_id, kind, result.as_deref(), now_ms())
-            .await?;
+        Self::record_step_in_tx(
+            &mut tx,
+            run_id,
+            step_id,
+            kind,
+            result.as_deref(),
+            now_ms(),
+            &self.crypto,
+        )
+        .await?;
         tx.commit().await.map_err(pg_err)
     }
 
@@ -733,6 +1066,7 @@ impl Store for PgStore {
     }
 
     async fn run_completed(&self, id: &str, output: Option<String>) -> StoreResult<()> {
+        let output = output.map(|o| self.crypto.enc(&o)); // P7.15
         sqlx::query(
             "UPDATE runs SET status = 4, output = $1, wait_event = NULL,
                              wait_step_id = NULL, wait_match = NULL, wake_at = NULL,
@@ -830,7 +1164,8 @@ impl Store for PgStore {
     ) -> StoreResult<EmitOutcome> {
         self.block(async {
             let mut tx = self.pool.begin().await.map_err(pg_err)?;
-            let outcome = Self::emit_in_tx(&mut tx, name, payload, targets, now_ms()).await?;
+            let outcome =
+                Self::emit_in_tx(&mut tx, name, payload, targets, now_ms(), &self.crypto).await?;
             tx.commit().await.map_err(pg_err)?;
             Ok(outcome)
         })
@@ -959,7 +1294,8 @@ impl Store for PgStore {
             .execute(&mut *tx)
             .await
             .map_err(pg_err)?;
-            let outcome = Self::emit_in_tx(&mut tx, event_name, payload, targets, now).await?;
+            let outcome =
+                Self::emit_in_tx(&mut tx, event_name, payload, targets, now, &self.crypto).await?;
             tx.commit().await.map_err(pg_err)?;
             Ok(Some(outcome))
         })
@@ -1049,8 +1385,8 @@ impl Store for PgStore {
                 id: r.get(0),
                 workflow: r.get(1),
                 status: r.get::<i32, _>(2) as i64,
-                input: r.get(3),
-                output: r.get(4),
+                input: self.crypto.dec(&r.get::<String, _>(3)), // P7.15
+                output: r.get::<Option<String>, _>(4).map(|o| self.crypto.dec(&o)),
                 error: r.get(5),
                 version: r.get(6),
                 parent_run_id: r.get(7),
@@ -1077,7 +1413,7 @@ impl Store for PgStore {
                 step_id: r.get(0),
                 kind: r.get(1),
                 status: r.get::<i32, _>(2) as i64,
-                result: r.get(3),
+                result: r.get::<Option<String>, _>(3).map(|v| self.crypto.dec(&v)), // P7.15
                 error: r.get(4),
                 attempts: r.get::<i32, _>(5) as u32,
                 updated_at: r.get(6),
@@ -1142,7 +1478,7 @@ impl Store for PgStore {
             .map(|r| EventRow {
                 id: r.get(0),
                 name: r.get(1),
-                payload: r.get(2),
+                payload: self.crypto.dec(&r.get::<String, _>(2)), // P7.15
                 emitted_at: r.get(3),
             })
             .collect())

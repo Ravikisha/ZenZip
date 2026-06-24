@@ -20,8 +20,39 @@ const toc = [
   { id: "durations", title: "Duration strings" },
   { id: "logging", title: "Logging" },
   { id: "store", title: "Storage" },
+  { id: "retention", title: "Retention & GC" },
+  { id: "health", title: "Health & operations" },
+  { id: "hardening", title: "Config hardening" },
   { id: "lifecycle", title: "Lifecycle" },
 ];
+
+const healthCode = `await app.start();
+await app.listen({ port: 3000 });
+
+// Probes for orchestrators (Kubernetes, ECS, …):
+//   GET /healthz → 200 { status: "alive" }     liveness, zero store I/O
+//   GET /readyz  → 200 { status: "ready" }      readiness: store reachable
+//                  503 { status: "unavailable" } not ready — hold traffic
+app.health();          // { alive, ready } in-process
+
+// Find runs that stopped progressing (lost wakeup / stalled sweep):
+const stuck = await app.orphanedRuns({ idle: "10m" });
+// [{ runId, workflow, status, idleMs, reason }]`;
+
+const retentionCode = `// Defaults: keep 7 days of runs + events, sweep hourly.
+const app = zenzip({
+  retention: {
+    runs: "30d",     // keep terminal runs (+ their steps) 30 days
+    events: "7d",    // keep events 7 days
+    sweep: "1h",     // GC sweep cadence
+  },
+});
+
+// Keep everything forever (e.g. you archive elsewhere):
+zenzip({ retention: { runs: "off", events: "off" } });
+
+// Run a GC pass on demand (ops / cron): returns rows removed.
+const { runs, steps, events } = app.gc();`;
 
 const fullConfig = `import { zenzip } from "zenzip";
 
@@ -31,6 +62,7 @@ const app = zenzip({
   sweep: "5s",                         // lease-expiry sweep cadence
   schedulerTick: "250ms",              // scheduler loop cadence
   workerThreads: 2,                    // engine tokio worker threads
+  encryptionKey: process.env.ZENZIP_KEY, // AES-256-GCM payloads at rest (opt-in)
   logLevel: "info",
   logger: ({ level, target, message }) => {
     myLogger.log({ level, target, message });
@@ -92,7 +124,7 @@ export default function Page() {
             type: `{ driver: "sqlite" } | { driver: "postgres", url }`,
             default: "sqlite",
             description:
-              "Storage backend. postgres throws today with a pointer to Phase 5 — the option exists so the config shape is stable.",
+              "Storage backend. sqlite is embedded + zero-config (single node); postgres enables multi-node (SKIP LOCKED claims, LISTEN/NOTIFY wakeups, advisory-lock scheduler election) with the same API.",
           },
           {
             name: "handleSignals",
@@ -133,6 +165,25 @@ export default function Page() {
             type: "(event: LogEvent) => void",
             description:
               "Receive structured engine logs ({ level, target, message }). Without it, logs go to stderr.",
+          },
+          {
+            name: "retention",
+            type: `{ runs?, events?: Duration | "off"; sweep?: Duration }`,
+            default: `runs/events "7d", sweep "1h"`,
+            description:
+              "Retention GC: a background sweep deletes aged terminal runs (+ steps) and old events so tables don't grow forever. Set a window to \"off\" to keep that category indefinitely.",
+          },
+          {
+            name: "payloads",
+            type: "{ threshold?: number; store?: BlobStore }",
+            description:
+              "Large-payload offloading (P9.1): step results over `threshold` bytes (default 64 KiB) go to a blob store; the journal keeps a reference. Default store is the filesystem; multi-node needs a shared store (e.g. S3).",
+          },
+          {
+            name: "encryptionKey",
+            type: "string",
+            description:
+              "Payload encryption at rest (P7.15): AES-256-GCM on job payloads, run inputs/outputs, step results, and event payloads. Load from an env var or secret manager — never hard-code, never lose it. Transparent to enable on an existing DB (legacy plaintext stays readable).",
           },
         ]}
       />
@@ -210,6 +261,85 @@ export default function Page() {
           first-class pattern.
         </p>
       </Callout>
+
+      <H2 id="retention">Retention &amp; GC</H2>
+      <P>
+        A durable engine persists every run, step, and event — so without
+        retention the store grows without bound (and the Postgres queue tables
+        degrade past ~100k rows). A background GC sweep deletes aged{" "}
+        <Strong>terminal</Strong> runs (completed / failed / cancelled), their
+        step journal, and old events. It is on by default.
+      </P>
+      <CodeBlock code={retentionCode} filename="retention.ts" />
+      <UL>
+        <LI>
+          Only <Strong>terminal</Strong> runs are eligible — an in-flight,
+          sleeping, or waiting run is never collected, however old.
+        </LI>
+        <LI>
+          Age is measured from the last update (completion time for runs,
+          emit time for events), not creation — a long run that just finished
+          is safe.
+        </LI>
+        <LI>
+          Each category is independent: <Code>&quot;off&quot;</Code> keeps it
+          forever; a <Code>Duration</Code> sets the window.
+        </LI>
+        <LI>
+          The sweep is index-backed (<Code>runs(status, updated_at)</Code>),
+          and rows removed are exposed as{" "}
+          <Code>runsGc</Code> / <Code>stepsGc</Code> / <Code>eventsGc</Code> in{" "}
+          <Code>app.metrics()</Code>. <Code>app.gc()</Code> triggers a pass
+          immediately.
+        </LI>
+      </UL>
+
+      <H2 id="health">Health &amp; operations</H2>
+      <CodeBlock code={healthCode} filename="ops.ts" />
+      <UL>
+        <LI>
+          <Strong>Liveness</Strong> (<Code>/healthz</Code>) = the process is up
+          and the engine responds — no store I/O, so a slow database never
+          fails it (which would trigger needless restarts).
+        </LI>
+        <LI>
+          <Strong>Readiness</Strong> (<Code>/readyz</Code>) = started{" "}
+          <em>and</em> the store answers a ping — gate rolling deploys and load
+          balancers on it. Returns <Code>503</Code> until ready. A route you
+          define yourself at the same path takes precedence.
+        </LI>
+        <LI>
+          <Code>app.orphanedRuns()</Code> surfaces non-terminal runs idle past
+          a window (default 5m) — a sleeping run past its wake, a wait past
+          timeout, a lost execution wakeup. They should be rare;{" "}
+          <Code>zenzip doctor</Code> reports them too.
+        </LI>
+      </UL>
+
+      <H2 id="hardening">Config hardening</H2>
+      <UL>
+        <LI>
+          <Strong>Boot-time validation (P13.5):</Strong> <Code>app.start()</Code>{" "}
+          validates options first and throws a clear{" "}
+          <Code>zenzip config: …</Code> error on misconfig (e.g. a postgres
+          store with no <Code>url</Code>, a negative payload threshold) — fail
+          fast, not a cryptic runtime crash. Call <Code>validateConfig(opts)</Code>{" "}
+          yourself to pre-check.
+        </LI>
+        <LI>
+          <Strong>Secrets:</Strong> load tokens / <Code>encryptionKey</Code> /
+          the postgres URL from the environment, never source. <Code>redactUrl(url)</Code>{" "}
+          masks the password for safe logging.
+        </LI>
+        <LI>
+          <Strong>Audit log (P13.6):</Strong> pass <Code>onAudit</Code> to
+          record privileged actions (workflow trigger / cancel, dead-letter
+          requeue, agent approve / deny) — each entry is{" "}
+          <Code>&#123; action, target, at, detail &#125;</Code>; wire it to an
+          append-only store for a queryable trail. A throwing sink never breaks
+          the action.
+        </LI>
+      </UL>
 
       <H2 id="lifecycle">Lifecycle</H2>
       <CodeBlock code={lifecycleCode} filename="lifecycle.ts" />

@@ -75,6 +75,13 @@ export default function Page() {
       <H2 id="routes">Routes</H2>
       <CodeBlock code={routes} filename="server.ts" />
       <CodeBlock code={semantics} lang="text" className="mt-4" />
+      <Callout type="info" title="Prefer Express?">
+        <p>
+          Handlers also accept the Express <code>(req, res, next)</code>{" "}
+          signature, and the app has <code>app.use()</code> middleware, routers,
+          and built-ins. See <a className="underline" href="/docs/express">Express &amp; Middleware</a>.
+        </p>
+      </Callout>
       <UL>
         <LI>
           <Code>app.get/post/put/patch/delete</Code> register before start;{" "}
@@ -138,11 +145,13 @@ export default function Page() {
         underneath (<Code>/api/overview</Code>, <Code>/api/runs/:id</Code>, …)
         is yours to script against.
       </P>
-      <Callout type="warn" title="Dev tool, for now">
+      <Callout type="info" title="Auth & roles">
         <p>
-          The dashboard binds to 127.0.0.1 by default and has no auth yet —
-          treat it as a development tool. Auth token + SSE live updates are on
-          the <a className="underline" href="/docs/roadmap">roadmap</a>.
+          Bind to 127.0.0.1 by default. Set <Code>token</Code> for full
+          (operator) access, and <Code>viewerToken</Code> for read-only access
+          — a viewer can watch every view but is rejected (403) on mutations
+          like requeue-dead. Tokens ride <Code>Authorization: Bearer …</Code>{" "}
+          or <Code>?token=</Code>; comparison is timing-safe.
         </p>
       </Callout>
 

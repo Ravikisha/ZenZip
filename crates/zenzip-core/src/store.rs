@@ -44,7 +44,7 @@ pub mod run_status {
     pub const CANCELLED: i64 = 6;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PushJob {
     pub queue: String,
     /// JSON-encoded payload, opaque to the store.
@@ -52,6 +52,17 @@ pub struct PushJob {
     pub priority: i32,
     pub delay_ms: i64,
     pub max_attempts: u32,
+    /// Per-key concurrency bucket (P10.1): at most `concurrency_key_limit` jobs
+    /// with the same key run at once. None = unbounded (global limit only).
+    pub concurrency_key: Option<String>,
+    /// Debounce bucket (P10.2): pushing with a key deletes any pending job with
+    /// the same key first, so only the latest (delayed by its window) runs.
+    pub debounce_key: Option<String>,
+    /// Throttle bucket (P10.2): pushing with a key spaces this job's
+    /// `available_at` by `throttle_spacing_ms` after the key's last scheduled
+    /// job, smoothing starts to a steady per-key rate (cross-node via a cursor).
+    pub throttle_key: Option<String>,
+    pub throttle_spacing_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +73,11 @@ pub struct ClaimedJob {
     /// 1-based attempt number (incremented at claim time).
     pub attempt: u32,
     pub max_attempts: u32,
+    /// Monotonic fencing token, bumped on every claim (P7.11). The worker
+    /// presents it on ack/fail/renew; a stale token (a job re-claimed by
+    /// another worker after lease expiry) is rejected — a zombie's late write
+    /// can't clobber the new owner.
+    pub fence: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -178,6 +194,15 @@ pub struct StepRow {
     pub updated_at: i64,
 }
 
+/// Rows removed by a retention GC pass (P7.6).
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GcStats {
+    pub runs: u64,
+    pub steps: u64,
+    pub events: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueueStat {
@@ -213,6 +238,10 @@ pub fn workflow_execution_job(workflow: &str, run_id: &str, delay_ms: i64) -> Pu
         delay_ms,
         // Infra retries for the attempt itself; step retries are engine-managed.
         max_attempts: 3,
+        concurrency_key: None,
+        debounce_key: None,
+        throttle_key: None,
+        throttle_spacing_ms: None,
     }
 }
 
@@ -225,22 +254,52 @@ pub trait Store: Send + Sync + 'static {
 
     /// Atomically claim up to `limit` ready jobs: pending, available, ordered
     /// by priority DESC then id ASC. Increments `attempt`, sets the lease.
-    async fn claim(&self, queue: &str, limit: u32, lease_ms: i64) -> StoreResult<Vec<ClaimedJob>>;
-    async fn ack(&self, id: &str) -> StoreResult<()>;
+    /// `key_limit` (P10.1): when set, a job is only claimed if fewer than
+    /// `key_limit` jobs with its `concurrency_key` are already running.
+    async fn claim(
+        &self,
+        queue: &str,
+        limit: u32,
+        lease_ms: i64,
+        key_limit: Option<u32>,
+        fair: bool,
+    ) -> StoreResult<Vec<ClaimedJob>>;
+    /// Ack a job, guarded by its fencing token (P7.11): a stale fence (the job
+    /// was re-claimed elsewhere) is a no-op.
+    async fn ack(&self, id: &str, fence: i64) -> StoreResult<()>;
     /// Failure with retry budget left: back to pending at `available_at`.
-    async fn fail_retry(&self, id: &str, error: &str, available_at: i64) -> StoreResult<()>;
-    /// Failure with attempts exhausted: dead-letter the job.
-    async fn fail_dead(&self, id: &str, error: &str) -> StoreResult<()>;
-    async fn renew_leases(&self, ids: Vec<String>, lease_until: i64) -> StoreResult<()>;
+    /// Fence-guarded.
+    async fn fail_retry(&self, id: &str, error: &str, available_at: i64, fence: i64)
+        -> StoreResult<()>;
+    /// Failure with attempts exhausted: dead-letter the job. Fence-guarded.
+    async fn fail_dead(&self, id: &str, error: &str, fence: i64) -> StoreResult<()>;
+    /// Renew leases for in-flight jobs, each guarded by its fence token. Takes
+    /// the lease *duration* (ms), not an absolute time: the Postgres backend
+    /// computes the new `lease_until` from server time so a skewed worker clock
+    /// can't mis-set it (P7.12).
+    async fn renew_leases(&self, leases: Vec<(String, i64)>, lease_ms: i64) -> StoreResult<()>;
+    /// Cheap reachability probe for readiness checks (P7.7): a trivial query
+    /// that confirms the backend is connected and answering.
+    async fn ping(&self) -> StoreResult<()>;
+
     /// Return lease-expired running jobs to pending (or dead if exhausted).
     /// Returns number of jobs transitioned.
     async fn sweep_expired(&self, now: i64) -> StoreResult<u64>;
+
+    /// Retention GC (P7.6): delete terminal runs (COMPLETED/FAILED/CANCELLED)
+    /// and their step journal whose `updated_at` predates `run_before`, and
+    /// events whose `emitted_at` predates `event_before`. `None` skips that
+    /// category (keep forever). One transaction; returns rows removed.
+    async fn gc(&self, run_before: Option<i64>, event_before: Option<i64>) -> StoreResult<GcStats>;
 
     async fn pending_count(&self, queue: &str) -> StoreResult<u64>;
     /// pending + running, used for schedule overlap=skip.
     async fn active_count(&self, queue: &str) -> StoreResult<u64>;
     async fn dead_jobs(&self, queue: &str, limit: u32) -> StoreResult<Vec<DeadJob>>;
     async fn requeue_dead(&self, ids: Vec<String>) -> StoreResult<u64>;
+    /// Bulk control-plane op (P14.1): permanently delete all dead-lettered jobs
+    /// for a queue. Returns the number removed.
+    async fn purge_dead(&self, queue: &str) -> StoreResult<u64>;
 
     // -- Workflow runs + step journal (P2) ---------------------------------
 

@@ -108,7 +108,7 @@ async fn jitter_delays_delivery() {
     assert_eq!(store.pending_count(&queue).await.unwrap(), 1);
     // With 60s jitter the job is almost surely not claimable immediately;
     // tolerate the tiny chance of jitter < ~10ms by allowing 0 or 1.
-    let claimable = store.claim(&queue, 10, 30_000).await.unwrap();
+    let claimable = store.claim(&queue, 10, 30_000, None, false).await.unwrap();
     assert!(claimable.len() <= 1);
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -125,6 +125,10 @@ fn push_n(queue: &str, n: usize) -> Vec<PushJob> {
             priority: 0,
             delay_ms: 0,
             max_attempts: 3,
+            concurrency_key: None,
+            debounce_key: None,
+            throttle_key: None,
+            throttle_spacing_ms: None,
         })
         .collect()
 }
@@ -161,6 +165,7 @@ async fn handler_batch_groups_jobs() {
             store: store.clone(),
             notify: notify.clone(),
             metrics: Arc::new(zenzip_core::metrics::Metrics::default()),
+            paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
         .run(token.clone(), tracker.clone()),
     );
@@ -228,6 +233,7 @@ async fn rate_limit_caps_throughput() {
             store: store.clone(),
             notify: notify.clone(),
             metrics: Arc::new(zenzip_core::metrics::Metrics::default()),
+            paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
         .run(token.clone(), tracker.clone()),
     );

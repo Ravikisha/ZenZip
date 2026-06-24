@@ -9,7 +9,8 @@
     "bench:boundary": "node bench/boundary.mjs",
     "bench:tsfn": "node bench/tsfn.mjs",
     "bench:sqlite": "node bench/sqlite.mjs",
-    "bench:http": "node bench/http.mjs"
+    "bench:http": "node bench/http.mjs",
+    "bench:compare": "node bench/compare.mjs"
   },
   "packageManager": "pnpm@10.33.1",
   "devDependencies": {

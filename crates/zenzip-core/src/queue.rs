@@ -7,6 +7,7 @@
 //! for per-job consumers, N for `processBatch`. The NAPI layer wraps a
 //! ThreadsafeFunction into one, keeping this module free of N-API types.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -113,6 +114,12 @@ pub struct QueueConfig {
     /// Jobs delivered per handler invocation (1 = per-job consumer).
     pub handler_batch: u32,
     pub rate_limit: Option<RateLimit>,
+    /// Per-key concurrency limit (P10.1): at most this many jobs sharing a
+    /// `concurrency_key` run at once. None = global concurrency only.
+    pub concurrency_key_limit: Option<u32>,
+    /// Fairness (P10.3): round-robin claims across concurrency_key groups so
+    /// one tenant can't starve others.
+    pub fair: bool,
 }
 
 impl QueueConfig {
@@ -127,6 +134,8 @@ impl QueueConfig {
             batch: 32,
             handler_batch: 1,
             rate_limit: None,
+            concurrency_key_limit: None,
+            fair: false,
         }
     }
 }
@@ -138,6 +147,8 @@ pub struct QueueWorker {
     /// Woken on local pushes so same-process latency is not poll-bound.
     pub notify: Arc<Notify>,
     pub metrics: Arc<Metrics>,
+    /// Pause flag (P14.1): when set, the worker stops claiming new jobs.
+    pub paused: Arc<AtomicBool>,
 }
 
 impl QueueWorker {
@@ -155,6 +166,11 @@ impl QueueWorker {
                 if token.is_cancelled() {
                     return;
                 }
+                // Paused (P14.1): don't claim; fall through to the sleep below
+                // and re-check on the next poll / on resume's notify.
+                if self.paused.load(Ordering::Relaxed) {
+                    break;
+                }
                 let available = semaphore.available_permits() as u32;
                 if available == 0 {
                     saturated = true;
@@ -170,7 +186,13 @@ impl QueueWorker {
                 }
                 let jobs = match self
                     .store
-                    .claim(&self.cfg.name, want, self.cfg.lease_ms)
+                    .claim(
+                        &self.cfg.name,
+                        want,
+                        self.cfg.lease_ms,
+                        self.cfg.concurrency_key_limit,
+                        self.cfg.fair,
+                    )
                     .await
                 {
                     Ok(jobs) => jobs,
@@ -241,6 +263,8 @@ async fn run_group(
     metrics: Arc<Metrics>,
 ) {
     let ids: Vec<String> = jobs.iter().map(|j| j.id.clone()).collect();
+    // (id, fence) pairs so lease renewal is fence-guarded too (P7.11).
+    let leases: Vec<(String, i64)> = jobs.iter().map(|j| (j.id.clone(), j.fence)).collect();
     let started = tokio::time::Instant::now();
     let fut = handler(jobs.clone());
     tokio::pin!(fut);
@@ -255,7 +279,7 @@ async fn run_group(
         tokio::select! {
             r = &mut fut => break r,
             _ = renew.tick() => {
-                if let Err(e) = store.renew_leases(ids.clone(), now_ms() + cfg.lease_ms).await {
+                if let Err(e) = store.renew_leases(leases.clone(), cfg.lease_ms).await {
                     tracing::warn!(queue = %cfg.name, error = %e, "lease renewal failed");
                 }
             }
@@ -265,9 +289,9 @@ async fn run_group(
     metrics.record_handler(started.elapsed().as_millis() as u64);
     match result {
         Ok(()) => {
-            for id in &ids {
-                if let Err(e) = store.ack(id).await {
-                    tracing::error!(job = %id, error = %e, "ack failed");
+            for job in &jobs {
+                if let Err(e) = store.ack(&job.id, job.fence).await {
+                    tracing::error!(job = %job.id, error = %e, "ack failed");
                 }
             }
             metrics
@@ -280,13 +304,13 @@ async fn run_group(
                     metrics
                         .jobs_dead
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    store.fail_dead(&job.id, &message).await
+                    store.fail_dead(&job.id, &message, job.fence).await
                 } else {
                     metrics
                         .jobs_retried
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let at = now_ms() + cfg.backoff.delay_for(job.attempt);
-                    store.fail_retry(&job.id, &message, at).await
+                    store.fail_retry(&job.id, &message, at, job.fence).await
                 };
                 if let Err(e) = outcome {
                     tracing::error!(job = %job.id, error = %e, "nack persistence failed");

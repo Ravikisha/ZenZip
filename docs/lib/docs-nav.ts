@@ -19,6 +19,7 @@ export const docsNav: NavGroup[] = [
   {
     title: "Core Concepts",
     items: [
+      { title: "Concepts", href: "/docs/concepts" },
       { title: "Architecture", href: "/docs/architecture" },
       { title: "Durability & Semantics", href: "/docs/durability" },
     ],
@@ -33,12 +34,14 @@ export const docsNav: NavGroup[] = [
       { title: "Events", href: "/docs/events" },
       { title: "State Machines", href: "/docs/state-machines" },
       { title: "HTTP & Dashboard", href: "/docs/http-dashboard" },
+      { title: "Express & Middleware", href: "/docs/express" },
       { title: "Configuration", href: "/docs/configuration" },
     ],
   },
   {
     title: "Project",
     items: [
+      { title: "Migrating to ZenZip", href: "/docs/migrating" },
       { title: "Comparisons", href: "/docs/comparison" },
       { title: "Benchmarks", href: "/docs/benchmarks" },
       { title: "Roadmap", href: "/docs/roadmap" },

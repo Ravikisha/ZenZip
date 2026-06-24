@@ -22,6 +22,11 @@ const toc = [
   { id: "phase-3", title: "Phase 3 — Events & dashboard" },
   { id: "phase-4", title: "Phase 4 — Agents" },
   { id: "phase-5", title: "Phase 5 — Multi-node" },
+  { id: "phase-7", title: "Phase 7 — Hardening" },
+  { id: "phase-8", title: "Phase 8 — Express DX" },
+  { id: "phase-9", title: "Phase 9 — AI depth" },
+  { id: "phase-10", title: "Phase 10 — Flow control" },
+  { id: "phase-13", title: "Phase 13+ — Production ops" },
   { id: "backlog", title: "Post-1.0 backlog" },
 ];
 
@@ -169,6 +174,78 @@ export default function Page() {
         <Item status="done">Workflow node-kill test: runs complete on survivors, step journal effectively-once; same TS API — store: {"{ driver: 'postgres', url }"}</Item>
         <Item status="done">Bonus engine fix the tests forced: dispatcher saturation stall (one wake now drains any burst)</Item>
         <Item status="partial">Server-grade load benchmarks; SQLite→Postgres data migration tool; multi-node rolling-deploy chaos exercise</Item>
+      </ul>
+
+      <PhaseHeader id="phase-7" title="Phase 7 — Production hardening" badge="in progress" variant="accent" />
+      <ul className="mt-4">
+        <Item status="done">Retention / GC (P7.6): background sweep deletes aged terminal runs (+ step journal) and old events; index-backed (runs status, updated_at); configurable per-category windows or &quot;off&quot;; app.gc() manual trigger; runsGc/stepsGc/eventsGc metrics — SQLite + Postgres</Item>
+        <Item status="todo">Observability (7A): OTLP span/metric export, schedule_to_start latency, trace-context propagation, GenAI semconv</Item>
+        <Item status="done">Liveness/readiness split (P7.7): /healthz (zero-I/O) + /readyz (store ping) + app.health(); user routes override</Item>
+        <Item status="done">Orphaned-run observability (P7.10): app.orphanedRuns() + zenzip doctor surface non-terminal runs idle past a window</Item>
+        <Item status="done">Backpressure / admission control (P7.8): queue maxPending → push/pushBulk throw QueueFullError when saturated</Item>
+        <Item status="todo">Ops (7B): Postgres time/status partitioning</Item>
+        <Item status="done">Effect-level idempotency helper (P7.13): ctx.idempotencyKey(label) — deterministic across retries/replays for deduping enqueues + external side effects</Item>
+        <Item status="done">Fencing tokens (P7.11): monotonic per-job token bumped on claim; ack/fail/renew fence-guarded → a zombie worker&apos;s late write is rejected (SQLite + Postgres)</Item>
+        <Item status="done">Deterministic fault-injection harness (P7.14): FaultStore wraps any store to inject fail-next-N / slow-store faults — repeatable chaos in cargo test, no spawned processes</Item>
+        <Item status="todo">Reliability (7C): clock-skew bounds for multi-node ordering</Item>
+        <Item status="done">Dashboard RBAC (P7.17): operator vs read-only viewer tokens — viewers get 403 on mutating endpoints; timing-safe</Item>
+        <Item status="done">SSRF allowlist (P7.16): assertPublicUrl resolve-then-validate (blocks private/loopback/link-local/metadata + v4-mapped); wired into mcp(), exported for tool authors</Item>
+        <Item status="done">Payload encryption at rest (P7.15): opt-in encryptionKey → AES-256-GCM on job payloads, run input/output, step results, event payloads; transparent enable (enc:1: sentinel keeps legacy plaintext readable); validated SQLite + Postgres + JS</Item>
+        <Item status="todo">Security (7D): SLSA-L2 signed releases</Item>
+        <Item status="todo">Packaging (7E): full prebuild matrix incl. musl, WASM/WASI fallback, bundler/serverless recipes</Item>
+      </ul>
+
+      <PhaseHeader id="phase-8" title="Phase 8 — Express-native DX layer" badge="in progress" variant="accent" />
+      <ul className="mt-4">
+        <Item status="done">app.use() middleware — global + path-scoped, multiple handlers per call, registration-order chain</Item>
+        <Item status="done">4-arg error middleware (arity ≥ 4); throws/rejections from middleware OR route handlers route to it, else 500</Item>
+        <Item status="done">Dual handler signature: Express (req, res, next) alongside the original (ctx); chosen by arity</Item>
+        <Item status="done">req/res augmentation: req.params/query/body/path/app/get(); res.status/json/send/sendStatus/set/redirect/locals</Item>
+        <Item status="done">zenzip.Router() with mounting + nested routers + router-scoped middleware</Item>
+        <Item status="done">Built-in middleware: json(), urlencoded(), cors() (+ OPTIONS preflight), logger(), static() (traversal-safe)</Item>
+        <Item status="done">Adapters: toNodeHandler() (Express/Connect/Fastify) + toFetchHandler() (Next.js/Hono/Bun/Deno/edge — Request→Response)</Item>
+        <Item status="done">Migration guides: Coming-from-Express + BullMQ / Inngest / Temporal side-by-side</Item>
+        <Item status="partial">Framework-specific sugar: dedicated Fastify plugin / Hono middleware / Nest module wrappers</Item>
+      </ul>
+
+      <PhaseHeader id="phase-9" title="Phase 9 — AI-native depth" badge="in progress" variant="accent" />
+      <ul className="mt-4">
+        <Item status="done">Realtime run subscription (P9.4): app.subscribe(runId) — async-iterable stream of run status + step events, store-backed (cross-process), pipe to SSE/WebSocket</Item>
+        <Item status="done">Large LLM payload offloading (P9.1): over-threshold step results written to a blob store (pluggable; fs default), journal keeps a reference, replay rehydrates transparently</Item>
+        <Item status="done">MCP consume (P9.2a): mcp(url) connects over Streamable HTTP, lists tools, exposes them as durable agent tools (prefix, headers, session)</Item>
+        <Item status="done">MCP author (P9.2b): app.mcpServer() / app.mcpHandler() expose workflows + agents as an MCP server (allowlists, token auth, sync-wait or fire-and-forget)</Item>
+        <Item status="done">Provider cost tables (P9.7): per-model pricing registry → result.costUsd dollar accounting; registerPricing override; openaiCompatible covers OpenAI-compatible providers</Item>
+        <Item status="todo">Tiered agent memory (P9.3): semantic recall, working memory, observational compression</Item>
+        <Item status="todo">Built-in evals (P9.5); multi-agent networks (P9.6); native Google/Bedrock adapters (P9.7 breadth)</Item>
+      </ul>
+
+      <PhaseHeader id="phase-10" title="Phase 10 — Flow control & scale" badge="in progress" variant="accent" />
+      <ul className="mt-4">
+        <Item status="done">Per-key / per-tenant concurrency (P10.1): concurrency: &#123; limit, key &#125; — cap in-flight per key, enforced in the store at claim time (SQLite + Postgres), cross-node-correct</Item>
+        <Item status="done">Step timeouts (P15.1 start): step.run(id, fn, &#123; timeout &#125;) fails an overrunning step instead of wedging a worker slot</Item>
+        <Item status="done">Safe versioning ergonomics (P10.6): wf.version(oldFn) routes in-flight runs pinned to an old content hash to the old logic; new runs use the current fn</Item>
+        <Item status="done">Debounce (P10.2): queue debounce: &#123; key, window &#125; collapses a burst to the last push, store-enforced (delete-then-insert)</Item>
+        <Item status="done">Fairness (P10.3): queue fair:true round-robins claims across concurrency-key groups (priority already supported) so no tenant starves others</Item>
+        <Item status="done">Postgres resilience (P15.4): pool acquire-timeout + connection recycling + statement_timeout bound (fail-fast / post-failover recovery)</Item>
+        <Item status="done">Clock-skew safety (P7.12): Postgres lease set/renew/expiry use DB server time, not node wall clocks (skew test: a +1h-skewed sweeper won&apos;t expire a valid lease)</Item>
+        <Item status="done">Throttle (P10.2): queue throttle: &#123; key, max, per &#125; spaces starts to a steady per-key rate via a store cursor (every job runs, paced)</Item>
+        <Item status="done">Benchmark suite (P10.5): bench/compare.mjs runs ZenZip vs Express vs Fastify on identical handlers</Item>
+        <Item status="done">HTTP adapter fast path (P10.7): skip body read for GET/HEAD/OPTIONS &amp; declared-empty bodies + reuse the parsed URL for ctx.query &mdash; lifted GET throughput 50&ndash;130%, now 1.8&ndash;2.7x Express and 0.84&ndash;0.98x Fastify (was ~0.5x)</Item>
+        <Item status="done">HTTP adapter router (P10.8): radix-tree route match (O(path-depth), no per-request array alloc) replaces the linear scan; first-match-wins preserved so user routes still override built-ins. Prototype-swap req/res was tried and reverted &mdash; per-request Object.setPrototypeOf is a V8 deopt that halved GET throughput</Item>
+        <Item status="done">Postgres scale (P10.4): event outbox RANGE-partitioned by emitted_at (daily buckets) so retention GC DROPs whole aged partitions instead of row-DELETE; priority-ordered partial dequeue index removes the claim Sort (EXPLAIN: 53.5ms&rarr;0.83ms on an 80k-row queue). Validated on live Postgres</Item>
+      </ul>
+
+      <PhaseHeader id="phase-13" title="Phase 13+ — Production ops (gap-analysis, demand-pulled)" badge="in progress" variant="accent" />
+      <ul className="mt-4">
+        <Item status="done">App auth (P13.1): zenzip.auth() — Bearer/x-api-key vs static tokens or a verify() callback (JWT/OIDC seam), attaches req.user, route-guard via path mount</Item>
+        <Item status="done">Request validation (P13.2): zenzip.validate(&#123; body, query &#125;) — Standard Schema, auto-400 with issues, parses into the handler</Item>
+        <Item status="done">Graceful HTTP drain (P15.3): stop() drains in-flight requests, frees idle keep-alive, force-closes stragglers at httpDrain deadline</Item>
+        <Item status="done">Security headers (P13.3): zenzip.secureHeaders() helmet-equivalent defaults + opt-in CSP</Item>
+        <Item status="done">HTTP rate limiting (P13.4): zenzip.rateLimit() fixed-window per key → 429 + X-RateLimit headers</Item>
+        <Item status="done">Config hardening (P13.5): boot-time validateConfig() fail-fast + redactUrl() secret masking</Item>
+        <Item status="done">Audit log (P13.6): onAudit sink records workflow trigger/cancel, requeue-dead, agent approve/deny — &#123; action, target, at, detail &#125;</Item>
+        <Item status="partial">Control plane (P14.1): queue.purgeDead() + queue.pause()/resume()/isPaused() shipped (pause in-process per node); bulk cancel-by-filter remains</Item>
+        <Item status="todo">CSRF (P13.3); alerting (P14.2); circuit breakers / PG resilience / poison (P15.2/4/5); Docker/Helm/integrations (P16)</Item>
       </ul>
 
       <H2 id="backlog">Post-1.0 backlog (deliberately parked)</H2>

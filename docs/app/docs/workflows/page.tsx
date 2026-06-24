@@ -53,11 +53,15 @@ const user = await step.run("fetch-user", () => db.users.find(id));
 // Completed steps never re-run during those retries.
 const charge = await step.run("charge", async () => {
   const res = await stripe.charge(amount, {
-    idempotencyKey: \`\${runId}:charge\`,   // guard the side effect
+    idempotencyKey: ctx.idempotencyKey("charge"),  // guard the side effect
   });
   if (!res.ok) throw new Error(res.reason);
   return res.id;
-});`;
+});
+
+// ctx.idempotencyKey(label) is deterministic across retries + replays —
+// derived from the run id — so an effect that succeeds but crashes before
+// its result is journaled won't duplicate. One distinct label per effect.`;
 
 const stepSleep = `await step.sleep("cooloff", "10m");   // minutes
 await step.sleep("digest-gap", "7d");  // …or days. Zero resources held.`;
@@ -111,7 +115,13 @@ const run = await order.getRun(runId);
 //       | completed | failed | cancelled
 
 // Cancel a run and all its child runs:
-await order.cancel(runId);`;
+await order.cancel(runId);
+
+// Realtime: stream status + step events until the run finishes (P9.4).
+// Store-backed, so it works across processes — pipe it to SSE/WebSocket.
+for await (const u of app.subscribe(runId, { interval: 250 })) {
+  console.log(u.status, u.steps.length); // ends when u.terminal
+}`;
 
 export default function Page() {
   return (
@@ -154,6 +164,13 @@ export default function Page() {
         <LI>
           Side effects are at-least-once — pass effect-level idempotency keys
           to external systems.
+        </LI>
+        <LI>
+          Bound a slow step with{" "}
+          <Code>step.run(&quot;x&quot;, fn, &#123; timeout: &quot;30s&quot; &#125;)</Code>{" "}
+          (P15.1): overrunning fails the step (then retries) instead of wedging a
+          worker slot. Pass an AbortSignal-aware <Code>fn</Code> to also cancel
+          the underlying I/O.
         </LI>
       </UL>
 

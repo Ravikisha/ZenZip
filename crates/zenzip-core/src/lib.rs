@@ -9,6 +9,8 @@
 //! - Rust -> JS: pipelined ThreadsafeFunction dispatch for handlers.
 //! - No async NAPI functions on hot paths.
 
+pub mod crypto;
+pub mod fault;
 pub mod metrics;
 pub mod postgres;
 pub mod queue;

@@ -19,6 +19,10 @@ export declare class ZenRuntime {
   recordStep(runId: string, stepId: string, kind: string, result?: string | undefined | null): void
   /** Runtime metrics counters as JSON (P3.11). */
   metricsSnapshot(): string
+  /** Run a retention GC pass now; returns `{ runs, steps, events }` JSON (P7.6). */
+  runGc(): string
+  /** Readiness: started AND the store answers a ping (P7.7). */
+  healthCheck(): boolean
   /** Agent session conversation JSON, or null (P4.7). */
   agentSessionGet(agent: string, id: string): string | null
   agentSessionPut(agent: string, id: string, messages: string): void
@@ -52,6 +56,13 @@ export declare class ZenRuntime {
   /** Dead-letter jobs as a JSON string (parsed JS-side). */
   deadJobs(queue: string, limit?: number | undefined | null): Promise<string>
   requeueDead(ids: Array<string>): Promise<number>
+  /** Pause a queue: stop claiming new jobs on this node (P14.1). */
+  pauseQueue(queue: string): void
+  /** Resume a paused queue. */
+  resumeQueue(queue: string): void
+  isQueuePaused(queue: string): boolean
+  /** Bulk control-plane op (P14.1): delete all dead-lettered jobs for a queue. */
+  purgeDead(queue: string): Promise<number>
 }
 
 export declare function asyncAdd(a: number, b: number): Promise<number>
@@ -110,6 +121,13 @@ export interface JsPushOptions {
   delayMs?: number
   priority?: number
   maxAttempts?: number
+  /** Per-key concurrency bucket for this job (P10.1). */
+  concurrencyKey?: string
+  /** Debounce bucket for this job (P10.2). */
+  debounceKey?: string
+  /** Throttle bucket + spacing (ms) for this job (P10.2). */
+  throttleKey?: string
+  throttleSpacingMs?: number
 }
 
 export interface JsQueueOptions {
@@ -125,6 +143,10 @@ export interface JsQueueOptions {
   handlerBatch?: number
   rateLimitMax?: number
   rateLimitPerMs?: number
+  /** Per-key concurrency limit (P10.1). */
+  concurrencyKeyLimit?: number
+  /** Fairness across concurrency-key groups (P10.3). */
+  fair?: boolean
 }
 
 export interface JsRuntimeOptions {
@@ -136,6 +158,14 @@ export interface JsRuntimeOptions {
   workerThreads?: number
   /** error | warn | info | debug | trace | off (default: off) */
   logLevel?: string
+  /** Retention GC sweep cadence in ms (P7.6). Default: 1h. */
+  gcSweepMs?: number
+  /** Delete terminal runs older than this (ms). <= 0 disables. Default: 7d. */
+  runRetentionMs?: number
+  /** Delete events older than this (ms). <= 0 disables. Default: 7d. */
+  eventRetentionMs?: number
+  /** Payload encryption-at-rest passphrase (P7.15). Unset/empty = disabled. */
+  encryptionKey?: string
 }
 
 export interface JsScheduleOptions {

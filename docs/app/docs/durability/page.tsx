@@ -22,6 +22,7 @@ const toc = [
   { id: "suspension", title: "Suspension" },
   { id: "failure", title: "Failure & retry" },
   { id: "versioning", title: "Versioning" },
+  { id: "encryption", title: "Encryption at rest" },
   { id: "tested", title: "How it's tested" },
 ];
 
@@ -44,6 +45,13 @@ const stableValue = `// Between-steps code re-executes on EVERY attempt — keep
 // Need a stable value across attempts? Journal it:
 const startedAt = await step.run("now", () => Date.now());
 const token = await step.run("token", () => crypto.randomUUID());`;
+
+const versionRouting = `// v2 is the current logic; v1 in-flight runs keep running v1.
+const orderV1 = async ({ step, input }) => { /* old steps */ };
+const order = app.workflow("order", async ({ step, input }) => {
+  /* new steps */
+});
+order.version(orderV1);   // self-hashed; old pinned runs route here`;
 
 const idempotency = `// Run-level dedup: same workflow + same key = same run, forever.
 await order.trigger(input, { idempotencyKey: \`order-\${input.orderId}\` });
@@ -184,6 +192,19 @@ export default function Page() {
           lease/3 cadence, so long steps don&apos;t need a long lease.
         </LI>
         <LI>
+          <Strong>Clock-skew safety (P7.12):</Strong> on Postgres, lease
+          set/renew/expiry use the <Strong>database</Strong> server clock, not
+          per-node wall clocks — so a node whose clock drifts can&apos;t
+          prematurely expire another node&apos;s lease. One authority, no skew.
+        </LI>
+        <LI>
+          <Strong>Fencing tokens:</Strong> every claim bumps a monotonic token.
+          A paused/zombie worker that wakes after its lease expired (and the job
+          was re-claimed elsewhere) carries a stale token, so its ack / fail /
+          renew is rejected — the late write can&apos;t clobber the new owner or
+          double-execute.
+        </LI>
+        <LI>
           <Code>workflow.cancel(runId)</Code> cancels the run and all
           descendant runs; pending wake jobs become no-ops, and an in-flight
           attempt&apos;s outcome is discarded.
@@ -206,13 +227,65 @@ export default function Page() {
           ["Changing a step's kind (run → sleep, …)", "❌ throws on resume"],
         ]}
       />
+      <P>
+        <Strong>Version routing (P10.6):</Strong> for a structural change, keep
+        the old function and register it with{" "}
+        <Code>wf.version(oldFn)</Code> — in-flight runs pinned to the old
+        content hash keep executing the old logic, while new runs use the
+        current function. No determinism tax, no forced drain:
+      </P>
+      <CodeBlock code={versionRouting} filename="evolve.ts" />
       <Callout type="warn" title="Rule of thumb">
         <p>
-          Deploy additive changes freely. For structural changes, drain
-          in-flight runs first — or ship the new structure under a new
-          workflow name.
+          Deploy additive changes freely. For structural changes, route with{" "}
+          <Code>wf.version(oldFn)</Code>, drain in-flight runs first, or ship
+          the new structure under a new workflow name.
         </p>
       </Callout>
+
+      <H2 id="encryption">Encryption at rest (P7.15)</H2>
+      <P>
+        A durable engine persists every input and output, so for teams handling
+        PII that data sits in the store indefinitely. Set an{" "}
+        <Code>encryptionKey</Code> and ZenZip AES-256-GCM encrypts the four
+        payload columns — job payloads, run inputs/outputs, step results, and
+        event payloads — before they touch storage, decrypting on read. The
+        engine only ever holds plaintext in memory.
+      </P>
+      <CodeBlock
+        code={`const app = zenzip({
+  // Any-length secret. Load it from the environment or a secret
+  // manager — never hard-code it, and never lose it (encrypted
+  // payloads are unrecoverable without it).
+  encryptionKey: process.env.ZENZIP_ENCRYPTION_KEY,
+});`}
+        filename="app.ts"
+      />
+      <UL>
+        <LI>
+          <Strong>Transparent to enable.</Strong> Each value is tagged with an{" "}
+          <Code>enc:1:</Code> sentinel, so turning encryption on over an
+          existing database keeps legacy plaintext rows readable while new
+          writes are encrypted — no migration, no downtime.
+        </LI>
+        <LI>
+          <Strong>Authenticated.</Strong> GCM detects tampering and a wrong
+          key; a per-value random nonce means identical payloads never produce
+          identical ciphertext.
+        </LI>
+        <LI>
+          <Strong>Indexed/control fields stay clear.</Strong> Queue names,
+          event names, status, timestamps, and <Code>waitForEvent</Code> match
+          predicates are not encrypted — event matching runs against the
+          in-memory plaintext, so suspension/resume semantics are unchanged.
+        </LI>
+        <LI>
+          <Strong>Scope.</Strong> Covers the durable payload columns. It is not
+          a substitute for disk/volume encryption or TLS to Postgres — it
+          protects the payloads specifically, including in the dashboard and
+          DLQ views.
+        </LI>
+      </UL>
 
       <H2 id="tested">How it&apos;s tested</H2>
       <UL>

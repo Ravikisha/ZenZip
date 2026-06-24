@@ -272,6 +272,10 @@ impl Scheduler {
                 priority: 0,
                 delay_ms,
                 max_attempts: 1,
+                concurrency_key: None,
+                debounce_key: None,
+                throttle_key: None,
+                throttle_spacing_ms: None,
             }])
             .await
             .map_err(|e| e.to_string())?;
