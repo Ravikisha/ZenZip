@@ -113,7 +113,7 @@ export default function Page() {
       <ul className="mt-4">
         <Item status="done">Atomic event outbox: one transaction persists the event, wakes matching waiters, and creates triggered runs</Item>
         <Item status="done">Wildcard topic patterns (<code>user.*</code>, <code>billing.**</code>), ephemeral subscribers with unsubscribe</Item>
-        <Item status="done">Durable workflow triggers (<code>on: "event.name"</code>) with match predicates</Item>
+        <Item status="done">Durable workflow triggers (<code>on: &quot;event.name&quot;</code>) with match predicates</Item>
         <Item status="done">Persisted state machines: transitions, history, and triggered runs commit atomically</Item>
       </ul>
 
