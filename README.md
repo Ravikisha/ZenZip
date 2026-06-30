@@ -354,6 +354,10 @@ Standing rules: CI green on win/mac/linux before merge; every feature lands with
 tests (crash-safety where applicable) and docs; benchmark regressions >10% block
 merge; the plan follows the code, never silently diverges.
 
+
+## Author
+Ravi Kishan
+
 ## License
 
 [MIT](LICENSE)
