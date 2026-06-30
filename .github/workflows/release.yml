@@ -62,12 +62,14 @@ jobs:
           pip3 install ziglang
           cargo install cargo-zigbuild --locked
       - name: Build native module
+        # napi's --zig flag drives cargo-zigbuild, which wires BOTH the Rust
+        # linker and the C compiler (libsqlite3-sys) to zig and translates the
+        # Rust triple to zig's format. Plain `cargo`/`--use-napi-cross` instead
+        # look for an aarch64-linux-musl-gcc toolchain that isn't installed.
         run: >-
           pnpm --filter @zenzip/core-native exec napi build --platform --release
           --target ${{ matrix.settings.target }}
-          ${{ matrix.settings.cross && '--use-napi-cross' || '' }}
-        env:
-          CARGO: ${{ matrix.settings.cross && 'cargo-zigbuild' || 'cargo' }}
+          ${{ matrix.settings.cross && '--zig' || '' }}
       - uses: actions/upload-artifact@v4
         with:
           name: binding-${{ matrix.settings.target }}
