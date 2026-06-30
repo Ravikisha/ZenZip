@@ -109,7 +109,10 @@ mod tests {
         let pt = r#"{"ssn":"123-45-6789"}"#;
         let blob = c.enc(pt);
         assert!(blob.starts_with("enc:1:"));
-        assert!(!blob.contains("123-45-6789"), "plaintext must not appear at rest");
+        assert!(
+            !blob.contains("123-45-6789"),
+            "plaintext must not appear at rest"
+        );
         assert_eq!(c.dec(&blob), pt);
     }
 

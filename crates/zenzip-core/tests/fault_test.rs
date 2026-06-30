@@ -40,7 +40,10 @@ fn spawn_worker(
 ) -> (CancellationToken, TaskTracker) {
     let mut cfg = QueueConfig::new("q");
     cfg.poll_ms = 20;
-    cfg.backoff = Backoff { delay_ms: 10, max_delay_ms: 20 };
+    cfg.backoff = Backoff {
+        delay_ms: 10,
+        max_delay_ms: 20,
+    };
     let token = CancellationToken::new();
     let tracker = TaskTracker::new();
     let worker = QueueWorker {

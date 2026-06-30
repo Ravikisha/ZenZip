@@ -272,8 +272,13 @@ pub trait Store: Send + Sync + 'static {
     async fn ack(&self, id: &str, fence: i64) -> StoreResult<()>;
     /// Failure with retry budget left: back to pending at `available_at`.
     /// Fence-guarded.
-    async fn fail_retry(&self, id: &str, error: &str, available_at: i64, fence: i64)
-        -> StoreResult<()>;
+    async fn fail_retry(
+        &self,
+        id: &str,
+        error: &str,
+        available_at: i64,
+        fence: i64,
+    ) -> StoreResult<()>;
     /// Failure with attempts exhausted: dead-letter the job. Fence-guarded.
     async fn fail_dead(&self, id: &str, error: &str, fence: i64) -> StoreResult<()>;
     /// Renew leases for in-flight jobs, each guarded by its fence token. Takes

@@ -103,7 +103,9 @@ impl Store for FaultStore {
         fair: bool,
     ) -> StoreResult<Vec<ClaimedJob>> {
         self.gate("claim").await?;
-        self.inner.claim(queue, limit, lease_ms, key_limit, fair).await
+        self.inner
+            .claim(queue, limit, lease_ms, key_limit, fair)
+            .await
     }
     async fn ack(&self, id: &str, fence: i64) -> StoreResult<()> {
         self.gate("ack").await?;
@@ -192,7 +194,8 @@ impl Store for FaultStore {
         kind: &str,
         result: Option<String>,
     ) -> StoreResult<()> {
-        self.inner.record_step_blocking(run_id, step_id, kind, result)
+        self.inner
+            .record_step_blocking(run_id, step_id, kind, result)
     }
     async fn step_failed_attempt(
         &self,
@@ -310,7 +313,9 @@ impl Store for FaultStore {
         next_run_at: i64,
         last_run_at: Option<i64>,
     ) -> StoreResult<()> {
-        self.inner.set_schedule_next(name, next_run_at, last_run_at).await
+        self.inner
+            .set_schedule_next(name, next_run_at, last_run_at)
+            .await
     }
     async fn schedule_claim_tick(
         &self,

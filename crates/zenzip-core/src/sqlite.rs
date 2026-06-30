@@ -11,12 +11,12 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::crypto::Crypto;
 use crate::store::{
     status, workflow_execution_job, ClaimedJob, DeadJob, EmitOutcome, EventRow, GcStats,
     MachineHistoryRow, NewRun, PushJob, QueueStat, RunRow, ScheduleRow, StepEntry, StepRow, Store,
     StoreError, StoreResult, TriggerTarget, TriggeredRun, Waiter,
 };
-use crate::crypto::Crypto;
 use crate::time::now_ms;
 
 /// True when every key in the (optional) match object equals the same key in
@@ -237,7 +237,11 @@ impl SqliteStore {
         f(conn)
     }
 
-    fn create_run_inner(conn: &Connection, run: NewRun, crypto: &Crypto) -> StoreResult<(String, bool)> {
+    fn create_run_inner(
+        conn: &Connection,
+        run: NewRun,
+        crypto: &Crypto,
+    ) -> StoreResult<(String, bool)> {
         let now = now_ms();
         if let Some(key) = &run.idempotency_key {
             let existing: Option<String> = conn
@@ -332,7 +336,12 @@ impl SqliteStore {
         Ok(())
     }
 
-    fn insert_job_row(conn: &Connection, job: &PushJob, now: i64, crypto: &Crypto) -> StoreResult<String> {
+    fn insert_job_row(
+        conn: &Connection,
+        job: &PushJob,
+        now: i64,
+        crypto: &Crypto,
+    ) -> StoreResult<String> {
         // Debounce (P10.2): drop any pending job with the same key first, so
         // only this (latest) one survives — collapse-on-push.
         if let Some(dk) = &job.debounce_key {
@@ -436,7 +445,12 @@ impl SqliteStore {
                 Some(format!(r#"{{"event":{payload}}}"#)),
                 crypto,
             )?;
-            Self::insert_job_row(tx, &workflow_execution_job(&workflow, &run_id, 0), now, crypto)?;
+            Self::insert_job_row(
+                tx,
+                &workflow_execution_job(&workflow, &run_id, 0),
+                now,
+                crypto,
+            )?;
             waiters.push(Waiter {
                 run_id,
                 workflow,
@@ -954,7 +968,9 @@ impl Store for SqliteStore {
         kind: &str,
         result: Option<String>,
     ) -> StoreResult<()> {
-        self.blocking(|conn| Self::record_step_inner(conn, run_id, step_id, kind, result, &self.crypto))
+        self.blocking(|conn| {
+            Self::record_step_inner(conn, run_id, step_id, kind, result, &self.crypto)
+        })
     }
 
     async fn step_failed_attempt(
@@ -1537,9 +1553,8 @@ mod encryption_tests {
         let path = dir.join("z.db");
         let store = SqliteStore::open_with(&path, Crypto::new(Some("secret-key"))).unwrap();
         let raw = Connection::open(&path).unwrap();
-        let col = |sql: &str| -> String {
-            raw.query_row(sql, [], |r| r.get::<_, String>(0)).unwrap()
-        };
+        let col =
+            |sql: &str| -> String { raw.query_row(sql, [], |r| r.get::<_, String>(0)).unwrap() };
 
         // Job payload.
         let job_secret = r#"{"ssn":"123-45-6789"}"#;
@@ -1554,7 +1569,10 @@ mod encryption_tests {
         let claimed = store.claim("q", 1, 30_000, None, false).await.unwrap();
         assert_eq!(claimed[0].payload, job_secret, "claim decrypts");
         let stored = col("SELECT payload FROM jobs LIMIT 1");
-        assert!(stored.starts_with("enc:1:"), "job payload encrypted at rest");
+        assert!(
+            stored.starts_with("enc:1:"),
+            "job payload encrypted at rest"
+        );
         assert!(!stored.contains("123-45-6789"));
 
         // Run input + output, and a step result.

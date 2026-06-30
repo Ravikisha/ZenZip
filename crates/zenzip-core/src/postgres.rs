@@ -20,12 +20,12 @@ use sqlx::postgres::{PgPool, PgPoolOptions};
 use sqlx::{Executor, Postgres, Row, Transaction};
 use tokio::runtime::Handle;
 
+use crate::crypto::Crypto;
 use crate::store::{
     workflow_execution_job, ClaimedJob, DeadJob, EmitOutcome, EventRow, GcStats, MachineHistoryRow,
     NewRun, PushJob, QueueStat, RunRow, ScheduleRow, StepEntry, StepRow, Store, StoreError,
     StoreResult, TriggerTarget, TriggeredRun, Waiter,
 };
-use crate::crypto::Crypto;
 use crate::time::now_ms;
 
 pub const WAKE_CHANNEL: &str = "zenzip_wake";
@@ -250,7 +250,11 @@ impl PgStore {
             Ok::<_, sqlx::Error>(pool)
         })
         .map_err(pg_err)?;
-        let store = Self { pool, handle, crypto };
+        let store = Self {
+            pool,
+            handle,
+            crypto,
+        };
         // Create the current/next event partitions before any emit (P10.4), so
         // they land in droppable partitions instead of the DEFAULT catch-all.
         let _ = store.block(store.ensure_event_partitions(now_ms()));
@@ -309,7 +313,9 @@ impl PgStore {
         let mut dropped = 0u64;
         for r in rows {
             let name: String = r.get(0);
-            let Some(kstr) = name.strip_prefix("events_p") else { continue };
+            let Some(kstr) = name.strip_prefix("events_p") else {
+                continue;
+            };
             let Ok(k) = kstr.parse::<i64>() else { continue };
             if (k + 1) * w <= before {
                 let n: i64 =
@@ -547,8 +553,13 @@ impl PgStore {
                 crypto,
             )
             .await?;
-            Self::insert_job(tx, &workflow_execution_job(&workflow, &run_id, 0), now, crypto)
-                .await?;
+            Self::insert_job(
+                tx,
+                &workflow_execution_job(&workflow, &run_id, 0),
+                now,
+                crypto,
+            )
+            .await?;
             waiters.push(Waiter {
                 run_id,
                 workflow,
@@ -685,7 +696,11 @@ impl Store for PgStore {
             // Fairness orders by rank-within-key so the LIMIT round-robins
             // across groups; otherwise order by id (selection is what matters,
             // dispatch order is re-sorted below).
-            let order = if fair { "ORDER BY rn ASC, pr DESC, id ASC" } else { "ORDER BY id ASC" };
+            let order = if fair {
+                "ORDER BY rn ASC, pr DESC, id ASC"
+            } else {
+                "ORDER BY id ASC"
+            };
             // lease_until from DB server time + duration (P7.12).
             let sql = format!(
                 "UPDATE jobs SET status = 1, attempt = attempt + 1,
@@ -886,14 +901,13 @@ impl Store for PgStore {
             .await
             .map_err(pg_err)?
             .rows_affected();
-            stats.runs = sqlx::query(
-                "DELETE FROM runs WHERE status IN (4, 5, 6) AND updated_at < $1",
-            )
-            .bind(before)
-            .execute(&mut *tx)
-            .await
-            .map_err(pg_err)?
-            .rows_affected();
+            stats.runs =
+                sqlx::query("DELETE FROM runs WHERE status IN (4, 5, 6) AND updated_at < $1")
+                    .bind(before)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(pg_err)?
+                    .rows_affected();
         }
         if let Some(before) = event_before {
             // Drop fully-aged partitions wholesale (instant), then mop up the
@@ -971,12 +985,14 @@ impl Store for PgStore {
     }
 
     async fn purge_dead(&self, queue: &str) -> StoreResult<u64> {
-        Ok(sqlx::query("DELETE FROM jobs WHERE queue = $1 AND status = 3")
-            .bind(queue)
-            .execute(&self.pool)
-            .await
-            .map_err(pg_err)?
-            .rows_affected())
+        Ok(
+            sqlx::query("DELETE FROM jobs WHERE queue = $1 AND status = 3")
+                .bind(queue)
+                .execute(&self.pool)
+                .await
+                .map_err(pg_err)?
+                .rows_affected(),
+        )
     }
 
     async fn create_run(&self, run: NewRun) -> StoreResult<(String, bool)> {

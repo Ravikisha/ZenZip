@@ -45,7 +45,11 @@ async fn push_claim_ack_roundtrip() {
     assert_eq!(claimed[0].attempt, 1);
     assert_eq!(claimed[0].payload, "{\"n\":1}");
     // Claimed job is not claimable again while leased.
-    assert!(store.claim("q", 10, 30_000, None, false).await.unwrap().is_empty());
+    assert!(store
+        .claim("q", 10, 30_000, None, false)
+        .await
+        .unwrap()
+        .is_empty());
 
     store.ack(&claimed[0].id, claimed[0].fence).await.unwrap();
     assert_eq!(store.active_count("q").await.unwrap(), 0);
@@ -79,7 +83,11 @@ async fn retry_then_dead_letter() {
         .await
         .unwrap();
 
-    assert!(store.claim("q", 1, 30_000, None, false).await.unwrap().is_empty());
+    assert!(store
+        .claim("q", 1, 30_000, None, false)
+        .await
+        .unwrap()
+        .is_empty());
     let dead = store.dead_jobs("q", 10).await.unwrap();
     assert_eq!(dead.len(), 1);
     assert_eq!(dead[0].last_error.as_deref(), Some("boom 2"));
@@ -129,7 +137,11 @@ async fn lease_expiry_with_exhausted_attempts_goes_dead() {
     tokio::time::sleep(Duration::from_millis(80)).await;
     store.sweep_expired(now_ms()).await.unwrap();
 
-    assert!(store.claim("q", 1, 30_000, None, false).await.unwrap().is_empty());
+    assert!(store
+        .claim("q", 1, 30_000, None, false)
+        .await
+        .unwrap()
+        .is_empty());
     let dead = store.dead_jobs("q", 10).await.unwrap();
     assert_eq!(dead.len(), 1);
     assert_eq!(dead[0].last_error.as_deref(), Some("lease expired"));
@@ -328,7 +340,11 @@ async fn paused_worker_does_not_claim_until_resumed() {
     store.push(vec![job("q", "{}")]).await.unwrap();
     notify.notify_one();
     tokio::time::sleep(Duration::from_millis(150)).await;
-    assert_eq!(processed.load(Ordering::SeqCst), 0, "paused queue must not claim");
+    assert_eq!(
+        processed.load(Ordering::SeqCst),
+        0,
+        "paused queue must not claim"
+    );
 
     paused.store(false, Ordering::SeqCst);
     notify.notify_one();
@@ -369,9 +385,19 @@ async fn fair_claim_round_robins_across_keys() {
     // Fair claim of 2 round-robins → one "a" and one "b", not two "a"s.
     let claimed = store.claim("q", 2, 30_000, None, true).await.unwrap();
     assert_eq!(claimed.len(), 2);
-    let a = claimed.iter().filter(|j| j.payload.starts_with('a')).count();
-    let b = claimed.iter().filter(|j| j.payload.starts_with('b')).count();
-    assert_eq!((a, b), (1, 1), "fair claim must not let one key starve the other");
+    let a = claimed
+        .iter()
+        .filter(|j| j.payload.starts_with('a'))
+        .count();
+    let b = claimed
+        .iter()
+        .filter(|j| j.payload.starts_with('b'))
+        .count();
+    assert_eq!(
+        (a, b),
+        (1, 1),
+        "fair claim must not let one key starve the other"
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 
@@ -468,8 +494,14 @@ async fn per_key_concurrency_caps_running_per_key() {
 
     // limit 1 per key: one "a", one "b", plus the unbucketed job.
     let first = store.claim("q", 10, 30_000, Some(1), false).await.unwrap();
-    assert_eq!(first.iter().filter(|j| j.payload.starts_with('a')).count(), 1);
-    assert_eq!(first.iter().filter(|j| j.payload.starts_with('b')).count(), 1);
+    assert_eq!(
+        first.iter().filter(|j| j.payload.starts_with('a')).count(),
+        1
+    );
+    assert_eq!(
+        first.iter().filter(|j| j.payload.starts_with('b')).count(),
+        1
+    );
     assert!(first.iter().any(|j| j.payload == "nokey"));
     assert_eq!(first.len(), 3);
 
@@ -478,7 +510,11 @@ async fn per_key_concurrency_caps_running_per_key() {
     assert_eq!(second.len(), 0);
 
     // Finish the running "a" → its key frees a slot for the next "a".
-    let a = first.iter().find(|j| j.payload.starts_with('a')).unwrap().clone();
+    let a = first
+        .iter()
+        .find(|j| j.payload.starts_with('a'))
+        .unwrap()
+        .clone();
     store.ack(&a.id, a.fence).await.unwrap();
     let third = store.claim("q", 10, 30_000, Some(1), false).await.unwrap();
     assert_eq!(third.len(), 1);
@@ -510,7 +546,11 @@ async fn fencing_token_rejects_a_zombie_workers_late_write() {
         .await
         .unwrap();
     // The job is still RUNNING under B (fail_retry didn't move it back).
-    assert!(store.claim("q", 1, 30_000, None, false).await.unwrap().is_empty());
+    assert!(store
+        .claim("q", 1, 30_000, None, false)
+        .await
+        .unwrap()
+        .is_empty());
 
     // Worker B finishes with the current fence — that one takes effect.
     store.ack(&b[0].id, b[0].fence).await.unwrap();
@@ -524,9 +564,18 @@ async fn gc_removes_aged_terminal_runs_steps_and_events() {
 
     // A completed run with two journaled steps.
     let (rid, _) = store.create_run(new_run()).await.unwrap();
-    store.record_step(&rid, "a", "run", Some("1".into())).await.unwrap();
-    store.record_step(&rid, "b", "run", Some("2".into())).await.unwrap();
-    store.run_completed(&rid, Some("\"ok\"".into())).await.unwrap();
+    store
+        .record_step(&rid, "a", "run", Some("1".into()))
+        .await
+        .unwrap();
+    store
+        .record_step(&rid, "b", "run", Some("2".into()))
+        .await
+        .unwrap();
+    store
+        .run_completed(&rid, Some("\"ok\"".into()))
+        .await
+        .unwrap();
 
     // A still-runnable (non-terminal) run must survive GC.
     let (live, _) = store.create_run(new_run()).await.unwrap();

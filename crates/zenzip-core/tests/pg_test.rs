@@ -416,7 +416,10 @@ async fn pg_lease_expiry_ignores_skewed_caller_clock() {
     };
     let store = PgStore::open(tokio::runtime::Handle::current(), &pg_url()).expect("open pg store");
 
-    store.push(vec![pjob("sk", "j0", None, None)]).await.unwrap();
+    store
+        .push(vec![pjob("sk", "j0", None, None)])
+        .await
+        .unwrap();
     let claimed = store.claim("sk", 1, 30_000, None, false).await.unwrap();
     assert_eq!(claimed.len(), 1); // 30s lease, set from DB time
 
@@ -424,9 +427,16 @@ async fn pg_lease_expiry_ignores_skewed_caller_clock() {
     // with DB-time comparison it does not.
     let skewed = now_ms() + 3_600_000;
     let swept = store.sweep_expired(skewed).await.unwrap();
-    assert_eq!(swept, 0, "skewed sweeper clock must not expire a valid lease");
+    assert_eq!(
+        swept, 0,
+        "skewed sweeper clock must not expire a valid lease"
+    );
     // Still leased → not reclaimable.
-    assert!(store.claim("sk", 1, 30_000, None, false).await.unwrap().is_empty());
+    assert!(store
+        .claim("sk", 1, 30_000, None, false)
+        .await
+        .unwrap()
+        .is_empty());
 
     store.close_blocking();
 }
@@ -450,8 +460,14 @@ async fn pg_flow_control_keyed_fair_debounce_purge() {
         .await
         .unwrap();
     let keyed = store.claim("kq", 10, 30_000, Some(1), false).await.unwrap();
-    assert_eq!(keyed.iter().filter(|j| j.payload.starts_with('a')).count(), 1);
-    assert_eq!(keyed.iter().filter(|j| j.payload.starts_with('b')).count(), 1);
+    assert_eq!(
+        keyed.iter().filter(|j| j.payload.starts_with('a')).count(),
+        1
+    );
+    assert_eq!(
+        keyed.iter().filter(|j| j.payload.starts_with('b')).count(),
+        1
+    );
 
     // Fairness (P10.3): claim 2 round-robins one per key, not two "a"s.
     store
@@ -465,8 +481,14 @@ async fn pg_flow_control_keyed_fair_debounce_purge() {
         .unwrap();
     let fair = store.claim("fq", 2, 30_000, None, true).await.unwrap();
     assert_eq!(fair.len(), 2);
-    assert_eq!(fair.iter().filter(|j| j.payload.starts_with("fa")).count(), 1);
-    assert_eq!(fair.iter().filter(|j| j.payload.starts_with("fb")).count(), 1);
+    assert_eq!(
+        fair.iter().filter(|j| j.payload.starts_with("fa")).count(),
+        1
+    );
+    assert_eq!(
+        fair.iter().filter(|j| j.payload.starts_with("fb")).count(),
+        1
+    );
 
     // Debounce (P10.2): three rapid same-key pushes collapse to one pending.
     for i in 0..3 {
@@ -485,7 +507,11 @@ async fn pg_flow_control_keyed_fair_debounce_purge() {
         store.push(vec![j]).await.unwrap();
     }
     let throttled = store.claim("tq", 10, 30_000, None, false).await.unwrap();
-    assert_eq!(throttled.len(), 1, "throttle spaces starts; only 1 ready now");
+    assert_eq!(
+        throttled.len(),
+        1,
+        "throttle spaces starts; only 1 ready now"
+    );
     assert_eq!(store.pending_count("tq").await.unwrap(), 2);
 
     // Bulk DLQ purge (P14.1).
@@ -535,8 +561,14 @@ async fn pg_event_partition_dropped_by_gc() {
     };
 
     // open() pre-created the current + next partitions.
-    assert!(partition_exists(format!("events_p{k0}")).await, "current partition");
-    assert!(partition_exists(format!("events_p{}", k0 + 1)).await, "next partition");
+    assert!(
+        partition_exists(format!("events_p{k0}")).await,
+        "current partition"
+    );
+    assert!(
+        partition_exists(format!("events_p{}", k0 + 1)).await,
+        "next partition"
+    );
 
     // Manufacture a ~5-day-old partition holding one aged event.
     let k_old = k0 - 5;
@@ -563,7 +595,10 @@ async fn pg_event_partition_dropped_by_gc() {
 
     // GC with a one-day-ago cutoff: the aged partition is dropped wholesale.
     let stats = store.gc(None, Some(now - W)).await.unwrap();
-    assert_eq!(stats.events, 1, "one aged event reclaimed via partition drop");
+    assert_eq!(
+        stats.events, 1,
+        "one aged event reclaimed via partition drop"
+    );
     assert!(
         !partition_exists(format!("events_p{k_old}")).await,
         "aged partition must be dropped by gc"

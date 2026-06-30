@@ -586,7 +586,8 @@ impl CoreRuntime {
             return false;
         }
         let store = self.store.clone();
-        self.handle.block_on(async move { store.ping().await.is_ok() })
+        self.handle
+            .block_on(async move { store.ping().await.is_ok() })
     }
 
     /// Run a retention GC pass now, using the configured windows (P7.6).
