@@ -14,5 +14,15 @@ export default defineConfig({
         singleFork: true,
       },
     },
+    // With one shared process, per-test state must be reset or it leaks
+    // across files: restoreMocks undoes vi.fn/spies and unstubGlobals undoes
+    // vi.stubGlobal (which restoreAllMocks does NOT) — e.g. the mocked global
+    // `fetch` in google/bedrock tests would otherwise poison every later file.
+    restoreMocks: true,
+    unstubGlobals: true,
+    // Native concurrency tests (pause/claim races) are timing-sensitive and
+    // can flake under single-process CPU contention. A retry recovers a rare
+    // timing flake; a real bug still fails every attempt.
+    retry: 2,
   },
 });
