@@ -1,0 +1,6 @@
+apiVersion: v2
+name: zenzip-app
+description: Deploy a ZenZip app — durable workflows/queues/agents, zero extra infra.
+type: application
+version: 0.1.0
+appVersion: "0.0.0"

@@ -1,6 +1,8 @@
 <div align="center">
 
-# ⚡ ZenZip
+<img src="docs/public/logo.png" alt="ZenZip" width="128" height="128" />
+
+# ZenZip
 
 **The agent-native backend framework for Node.js.**
 
@@ -10,7 +12,14 @@ on a single Rust-powered runtime — with **zero infrastructure**.
 No Redis. No Temporal cluster. No RabbitMQ. No cron box.
 `npm install` is the entire setup.
 
-*Status: pre-1.0, built in the open. **190+ tests green** (138 TypeScript + 53 Rust),
+[![npm](https://img.shields.io/npm/v/zenzip.svg)](https://www.npmjs.com/package/zenzip)
+[![license](https://img.shields.io/npm/l/zenzip.svg)](LICENSE)
+
+```bash
+npm install zenzip
+```
+
+*Status: pre-1.0, built in the open. **230+ tests green** (179 TypeScript + 54 Rust),
 including SIGKILL crash-injection and multi-node Postgres chaos.*
 
 </div>
@@ -143,9 +152,16 @@ without re-calling the model for completed steps.
 
 ### AI-native
 - **Agents** — LLM loops compiled to dynamic workflow steps: tool failures retry
-  **without re-prompting the model**, durable human-approval gates, session
-  memory, multi-agent handoff, structured output, streaming, token accounting +
-  cost tables. Anthropic + OpenAI-compatible + scripted mock providers.
+  **without re-prompting the model**, durable human-approval gates, structured
+  output, streaming, token accounting + cost tables, per-agent **circuit
+  breakers**. Providers: Anthropic, OpenAI-compatible, **Google Gemini**, **AWS
+  Bedrock** (SigV4), and a scripted mock.
+- **Multi-agent networks** — `app.network()` routes a request among N specialist
+  agents via durable handoff child-workflows (1:N over the 1:1 `handoffTool`).
+- **Tiered memory** — `AgentMemory`: semantic recall (embeddings + pluggable
+  vector store) and working-memory compression for long sessions.
+- **Built-in evals** — rule-based, statistical, and model-graded (`llmJudge`)
+  evaluators + a suite runner to gate deploys and regression-test prompts.
 - **MCP, both directions** — consume external MCP servers as agent tools
   (`mcp(url)`), and expose your workflows/agents *as* an MCP server
   (`app.mcpServer()`) for other agents to call.
@@ -177,7 +193,13 @@ without re-calling the model for completed steps.
   enable on an existing DB.
 - **Hardening** — SSRF allowlists on user-controlled fetches, fencing tokens
   against zombie workers, clock-skew-safe leases on multi-node, realtime run
-  subscription API, idempotency helpers, graceful HTTP drain.
+  subscription API, idempotency helpers, graceful HTTP drain, **CSRF**, secrets
+  resolution (`env:`/`file:`) + redaction, typed error envelope.
+- **Multi-tenancy + PII** — `app.namespace(tenantId)` for logical isolation;
+  subject-tagged runs + `app.purgeSubject()` for GDPR erasure.
+- **Alerting + integrations** — `alerts` hook on DLQ growth / stuck runs;
+  pino/winston log transports + Sentry error reporting (`onError`,
+  `captureErrors`).
 
 ### Multi-node
 - **Postgres backend** — windowed/`SKIP LOCKED` claims, `LISTEN/NOTIFY`
@@ -270,8 +292,11 @@ Design decisions (D1–D8) with the measurements behind them:
 The docs site (Next.js, in `docs/` — `npm run dev`) covers every feature:
 introduction, quickstart, concepts, architecture, durability & semantics,
 queues, schedules, workflows, agents, events, state machines, HTTP & dashboard,
-Express & middleware, configuration, migrating from Express/Fastify,
-comparisons, benchmarks, and the roadmap.
+Express & middleware, configuration, **production & deployment**, migrating from
+Express/Fastify, comparisons, benchmarks, and the roadmap.
+
+**Deploying?** See the [Production & Deployment guide](docs/app/docs/production/page.tsx)
+and the reference `Dockerfile` + Kubernetes/Helm manifests in [`deploy/`](deploy/).
 
 ## Project status
 

@@ -24,8 +24,12 @@ const toc = [
   { id: "mcp", title: "MCP tools" },
   { id: "approval", title: "Human-in-the-loop" },
   { id: "sessions", title: "Session memory" },
+  { id: "memory", title: "Tiered memory" },
   { id: "handoff", title: "Multi-agent handoff" },
+  { id: "networks", title: "Multi-agent networks" },
+  { id: "resilience", title: "Circuit breakers" },
   { id: "output", title: "Structured output" },
+  { id: "evals", title: "Evals" },
   { id: "providers", title: "Providers" },
   { id: "options", title: "Options" },
 ];
@@ -148,6 +152,12 @@ anthropic({ apiKey })                       // Messages API, tool use, SSE
 openaiCompatible({ baseUrl, apiKey })       // OpenAI / Ollama / vLLM /
                                             // OpenRouter — function calling
 
+googleGemini({ apiKey })                    // Gemini generateContent +
+                                            // function calling (P9.7)
+
+bedrock({ region, accessKeyId,             // Anthropic Claude on AWS Bedrock,
+          secretAccessKey })               // SigV4-signed (P9.7)
+
 mockProvider([                              // deterministic tests, offline dev
   mockToolUse("search", { q: "x" }, { id: "tu_1" }),
   mockText("final answer"),
@@ -241,11 +251,149 @@ export default function Page() {
         when the run started.
       </P>
 
+      <H2 id="memory">Tiered memory (P9.3)</H2>
+      <P>
+        Session memory is the recent window. <Strong>Tiered memory</Strong> adds
+        two more tiers, opt-in via <Code>memory</Code>: <Strong>semantic
+        recall</Strong> (embed + retrieve the most relevant past facts and inject
+        them into the prompt) and <Strong>working memory</Strong> (compress old
+        turns into a summary so long sessions keep fitting the context window).
+        Recall + remember run inside durable steps, so they&apos;re journaled and
+        never re-run on replay.
+      </P>
+      <CodeBlock
+        code={`import { AgentMemory, openaiEmbeddings } from "zenzip";
+
+const memory = new AgentMemory({
+  embeddings: openaiEmbeddings({ apiKey: process.env.OPENAI_API_KEY }),
+  // store: new PgVectorStore(...),  // default is in-memory (process-local)
+  topK: 4,
+  provider, model,                  // enables working-memory compression
+});
+
+const agent = app.agent("support", { provider, model, memory });`}
+        filename="memory.ts"
+      />
+      <Callout type="warn" title="Durable recall needs a shared store">
+        <p>
+          The default <Code>InMemoryVectorStore</Code> is process-local and lost
+          on restart. For production durable, cross-node recall, implement the{" "}
+          <Code>MemoryStore</Code> interface over pgvector or a vector database.
+        </p>
+      </Callout>
+
       <H2 id="handoff">Multi-agent handoff</H2>
       <CodeBlock code={handoff} filename="handoff.ts" />
 
+      <H2 id="networks">Multi-agent networks (P9.6)</H2>
+      <P>
+        <Code>handoffTool</Code> is 1:1 delegation. A <Strong>network</Strong>{" "}
+        is the 1:N generalization: a <Strong>coordinator</Strong> that routes
+        each request to the right specialist — and may consult several in
+        sequence — then composes the final answer. The coordinator is itself a
+        durable agent whose tools are handoffs to every member, so each
+        delegation runs as a child workflow with its own journal, retries, and
+        cancellation propagation.
+      </P>
+      <CodeBlock
+        code={`import { zenzip } from "zenzip";
+
+const app = zenzip();
+
+const billing = app.agent("billing", { provider, model, instructions: "Refunds + invoices." });
+const tech    = app.agent("tech",    { provider, model, instructions: "Troubleshooting." });
+
+const support = app.network("support", {
+  provider, model,
+  agents: [billing, tech],            // or { agent, description } for richer routing
+  maxHandoffs: 4,                     // routing hops before it must answer
+});
+
+await app.start();
+const res = await support.run("I was double-charged and the app crashes");
+// → coordinator delegates to billing (and/or tech), then summarizes`}
+        filename="network.ts"
+      />
+      <P>
+        <Code>network.run()</Code> / <Code>network.trigger()</Code> behave like
+        an agent&apos;s. Routing is one-way (coordinator → specialist); the
+        per-run iteration cap bounds hops, so a misrouting can&apos;t loop
+        forever.
+      </P>
+
+      <H2 id="resilience">Circuit breakers (P15.2)</H2>
+      <P>
+        When an LLM provider (or any external dependency) starts failing,
+        retrying just piles load onto a service that is already down. A{" "}
+        <Strong>circuit breaker</Strong> opens after a threshold of failures and
+        makes subsequent calls <Strong>fail fast</Strong>, then probes for
+        recovery (half-open → closed). Set one on an agent to guard its model
+        calls:
+      </P>
+      <CodeBlock
+        code={`const agent = app.agent("support", {
+  provider, model,
+  circuitBreaker: {
+    failureThreshold: 5,    // consecutive failures trip it open
+    resetTimeout: "30s",    // then allow a probe (half-open)
+    maxConcurrent: 20,      // bulkhead: cap in-flight calls
+  },
+});`}
+        filename="agent.ts"
+      />
+      <P>
+        The breaker is process-local and shared across the agent&apos;s runs —
+        it protects the live process, so it is deliberately not journaled (a
+        retried step re-evaluates the live circuit). The same primitive is
+        exported for wrapping <em>your</em> external calls — third-party HTTP in
+        a tool, a webhook fan-out, anything:
+      </P>
+      <CodeBlock
+        code={`import { circuitBreaker, CircuitOpenError } from "zenzip";
+
+const payments = circuitBreaker({ failureThreshold: 3, resetTimeout: "10s" });
+
+try {
+  const res = await payments.run(() => fetch("https://payments.example/charge"));
+} catch (e) {
+  if (e instanceof CircuitOpenError) {
+    // fail fast — Stripe is down, don't hammer it
+  }
+}`}
+        filename="breaker.ts"
+      />
+
       <H2 id="output">Structured output</H2>
       <CodeBlock code={output} filename="classifier.ts" />
+
+      <H2 id="evals">Evals (P9.5)</H2>
+      <P>
+        Score outputs to gate deploys and regression-test prompts the way you
+        unit-test code. Evaluators are pure functions over a sample —{" "}
+        <Strong>rule-based</Strong> (<Code>contains</Code>, <Code>matches</Code>,{" "}
+        <Code>equals</Code>, <Code>jsonValid</Code>), <Strong>statistical</Strong>{" "}
+        (<Code>similarity</Code>), or <Strong>model-graded</Strong>{" "}
+        (<Code>llmJudge</Code>, a separate LLM scores against a rubric).
+        Aggregate one sample with <Code>evaluate()</Code> or a whole suite with{" "}
+        <Code>runEvals()</Code>.
+      </P>
+      <CodeBlock
+        code={`import { runEvals, contains, jsonValid, llmJudge, anthropic } from "zenzip";
+
+const judge = llmJudge({
+  provider: anthropic(), model: "claude-sonnet-4-6",
+  rubric: "Answers the question accurately and politely.",
+  threshold: 0.7,
+});
+
+const report = await runEvals(
+  cases.map((c) => ({ input: c.q, output: await agent.run(c.q).then((r) => r.text) })),
+  [contains("sorry", { ignoreCase: true }), jsonValid(), judge],
+);
+
+if (!report.passed) throw new Error(\`eval gate failed: \${report.passRate * 100}% passed\`);`}
+        filename="evals.ts"
+      />
 
       <H2 id="providers">Providers</H2>
       <CodeBlock code={providers} filename="providers.ts" />
@@ -281,6 +429,7 @@ export default function Page() {
           { name: "output", type: "StandardSchemaV1", description: "Validate the final answer as JSON (one corrective round)." },
           { name: "stepRetries", type: "number", default: "2", description: "Retries per step (tools, model calls)." },
           { name: "lease", type: "Duration", default: `"5m"`, description: "Crash-redelivery horizon — covers slow model calls." },
+          { name: "circuitBreaker", type: "CircuitBreakerOptions", description: "Fail-fast guard around model calls (P15.2): failureThreshold, resetTimeout, halfOpenMax, maxConcurrent." },
         ]}
       />
       <Table

@@ -1,0 +1,71 @@
+# Reference Kubernetes manifests for a ZenZip app (P16.2).
+#
+# Wires the first-class liveness/readiness endpoints (P7.7): /healthz is a
+# zero-I/O liveness check, /readyz verifies the store is reachable so a pod is
+# only sent traffic once its DB connection is live.
+#
+# Single-node (embedded SQLite) → use the StatefulSet + PVC below (replicas: 1).
+# Multi-node → switch to a Deployment with replicas: N and point ZENZIP at
+# Postgres (drop the volume); the engine handles cross-node claims + scheduler
+# election itself.
+apiVersion: v1
+kind: Service
+metadata:
+  name: zenzip
+  labels: { app: zenzip }
+spec:
+  selector: { app: zenzip }
+  ports:
+    - { name: http, port: 80, targetPort: 3000 }
+    - { name: dashboard, port: 4100, targetPort: 4100 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zenzip
+spec:
+  serviceName: zenzip
+  replicas: 1 # embedded SQLite is single-writer; use Postgres + Deployment to scale out
+  selector:
+    matchLabels: { app: zenzip }
+  template:
+    metadata:
+      labels: { app: zenzip }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        fsGroup: 1000
+      containers:
+        - name: zenzip
+          image: my-zenzip-app:latest
+          ports:
+            - { name: http, containerPort: 3000 }
+            - { name: dashboard, containerPort: 4100 }
+          env:
+            - { name: NODE_ENV, value: production }
+            # Encryption key (P7.15) from a Secret, never inline:
+            # - name: ZENZIP_ENCRYPTION_KEY
+            #   valueFrom: { secretKeyRef: { name: zenzip-secrets, key: encryptionKey } }
+          # Liveness = process up (zero I/O). Readiness = store reachable.
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          # Give in-flight jobs + HTTP requests time to drain on rollout (P15.3).
+          lifecycle:
+            preStop: { exec: { command: ["sleep", "10"] } }
+          resources:
+            requests: { cpu: "100m", memory: "128Mi" }
+            limits: { cpu: "1", memory: "512Mi" }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+  terminationGracePeriodSeconds: 30
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 5Gi } }

@@ -104,6 +104,9 @@ pub struct NewRun {
     pub idempotency_key: Option<String>,
     pub parent_run_id: Option<String>,
     pub parent_step_id: Option<String>,
+    /// Data-subject tag for PII purge (P14.6). When set, this run + its steps
+    /// can be deleted by subject via `purge_subject`.
+    pub subject: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -308,6 +311,10 @@ pub trait Store: Send + Sync + 'static {
     /// the sync NAPI trigger path.
     async fn create_run(&self, run: NewRun) -> StoreResult<(String, bool)>;
     fn create_run_blocking(&self, run: NewRun) -> StoreResult<(String, bool)>;
+
+    /// Delete every run (and its step journal) tagged with `subject` (P14.6) —
+    /// GDPR/PII erasure. Returns the number of runs removed.
+    async fn purge_subject(&self, subject: &str) -> StoreResult<u64>;
 
     async fn get_run(&self, id: &str) -> StoreResult<Option<RunRow>>;
     fn get_run_blocking(&self, id: &str) -> StoreResult<Option<RunRow>>;

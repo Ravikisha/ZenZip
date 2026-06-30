@@ -173,6 +173,9 @@ impl Store for FaultStore {
     fn create_run_blocking(&self, run: NewRun) -> StoreResult<(String, bool)> {
         self.inner.create_run_blocking(run)
     }
+    async fn purge_subject(&self, subject: &str) -> StoreResult<u64> {
+        self.inner.purge_subject(subject).await
+    }
     async fn get_run(&self, id: &str) -> StoreResult<Option<RunRow>> {
         self.inner.get_run(id).await
     }

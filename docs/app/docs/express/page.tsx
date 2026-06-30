@@ -168,6 +168,25 @@ export default function Page() {
           Express way: any handler with arity ≥ 4.
         </p>
       </Callout>
+      <P>
+        <Strong>Typed error envelope (P16.5).</Strong> An unhandled throw
+        becomes <Code>{`{ error, code, status }`}</Code> with a mapped HTTP
+        status. Throw <Code>HttpError</Code> for an explicit status/code; known
+        framework errors map automatically — saturation
+        (<Code>QueueFullError</Code>, <Code>CircuitOpenError</Code>) → 503,
+        validation → 400, everything else → 500.
+      </P>
+      <CodeBlock
+        code={`import { HttpError } from "zenzip";
+
+app.get("/orders/:id", (ctx) => {
+  const order = db.find(ctx.params.id);
+  if (!order) throw new HttpError(404, "order not found", "NOT_FOUND");
+  return order;
+});
+// unhandled throw → { "error": "...", "code": "Error", "status": 500 }`}
+        filename="errors.ts"
+      />
 
       <H2 id="routers">Routers &amp; mounting</H2>
       <CodeBlock code={routers} filename="api.ts" />
@@ -196,6 +215,7 @@ export default function Page() {
           [<Code key="7">zenzip.validate(opts)</Code>, "request validation (P13.2): body/query Standard Schema → auto-400 with issues, replaces with parsed value"],
           [<Code key="8">zenzip.secureHeaders(opts)</Code>, "security headers (P13.3): nosniff, X-Frame-Options, Referrer-Policy, HSTS; opt-in CSP (helmet-equivalent)"],
           [<Code key="9">zenzip.rateLimit(opts)</Code>, "HTTP rate limit (P13.4): fixed-window per key (default client IP) → 429 + X-RateLimit-* headers"],
+          [<Code key="10">zenzip.csrf(opts)</Code>, "CSRF protection (P13.3): origin/referer check on state-changing methods (pairs with SameSite cookies); allowedOrigins or same-origin → 403 otherwise"],
         ]}
       />
 

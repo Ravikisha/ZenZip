@@ -4,12 +4,13 @@
 
 export { zenzip, ZenzipApp } from "./app.js";
 export { Router } from "./router.js";
-export { validateConfig, redactUrl } from "./config.js";
+export { validateConfig, redactUrl, resolveSecret, redactSecrets } from "./config.js";
 export { FilesystemBlobStore } from "./payload.js";
 export type { BlobStore } from "./payload.js";
 export {
   auth,
   cors,
+  csrf,
   json,
   logger,
   rateLimit,
@@ -21,6 +22,7 @@ export {
 export type {
   AuthOptions,
   CorsOptions,
+  CsrfOptions,
   LoggerOptions,
   RateLimitOptions,
   SecureHeadersOptions,
@@ -32,6 +34,54 @@ export { Queue, QueueFullError } from "./queue.js";
 export { Workflow } from "./workflow.js";
 export { Machine } from "./machine.js";
 export { Agent, tool, handoffTool } from "./agent.js";
+export { Network } from "./network.js";
+export type { NetworkOptions } from "./network.js";
+export { Namespace } from "./namespace.js";
+export {
+  AgentMemory,
+  InMemoryVectorStore,
+  openaiEmbeddings,
+  mockEmbeddings,
+} from "./memory.js";
+export type {
+  AgentMemoryOptions,
+  EmbeddingProvider,
+  MemoryRecord,
+  MemoryStore,
+  OpenAiEmbeddingOptions,
+} from "./memory.js";
+export {
+  CircuitBreaker,
+  circuitBreaker,
+  CircuitOpenError,
+  BulkheadFullError,
+} from "./resilience.js";
+export type { CircuitBreakerOptions, CircuitState } from "./resilience.js";
+export {
+  evaluate,
+  runEvals,
+  contains,
+  matches,
+  equals,
+  jsonValid,
+  similarity,
+  llmJudge,
+} from "./eval.js";
+export type {
+  Evaluator,
+  EvalSample,
+  EvalResult,
+  EvaluationReport,
+  SuiteReport,
+  LlmJudgeOptions,
+} from "./eval.js";
+export {
+  pinoLogger,
+  winstonLogger,
+  sentryReporter,
+  captureErrors,
+} from "./integrations.js";
+export type { ErrorContext } from "./integrations.js";
 export { mcp } from "./mcp.js";
 export type { McpOptions } from "./mcp.js";
 export { assertPublicUrl, isPrivateIp } from "./ssrf.js";
@@ -48,6 +98,10 @@ export { costOf, priceFor, registerPricing } from "./llm/pricing.js";
 export type { ModelPrice } from "./llm/pricing.js";
 export { anthropic } from "./llm/anthropic.js";
 export { openaiCompatible } from "./llm/openai.js";
+export { googleGemini } from "./llm/google.js";
+export type { GoogleGeminiOptions } from "./llm/google.js";
+export { bedrock } from "./llm/bedrock.js";
+export type { BedrockOptions } from "./llm/bedrock.js";
 export { mockProvider, mockText, mockToolUse } from "./llm/mock.js";
 export { textContent, toolUses } from "./llm/types.js";
 export type {
@@ -64,6 +118,7 @@ export { eventMatches } from "./events.js";
 export { ms } from "./duration.js";
 export type { Duration } from "./duration.js";
 export type { CtxHandler, ExpressHandler, HttpContext, RouteHandler } from "./http.js";
+export { HttpError } from "./express.js";
 export type {
   ErrorMiddleware,
   Middleware,
@@ -82,6 +137,7 @@ export type {
   WorkflowOptions,
 } from "./workflow.js";
 export type {
+  Alert,
   AuditEntry,
   BatchJobHandler,
   DeadJob,

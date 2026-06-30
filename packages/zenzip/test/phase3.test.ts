@@ -190,7 +190,7 @@ describe("http adapter", () => {
 
     const boom = await fetch(`${base}/boom`);
     expect(boom.status).toBe(500);
-    expect(await boom.json()).toEqual({ error: "kaboom" });
+    expect(await boom.json()).toMatchObject({ error: "kaboom" });
 
     expect((await fetch(`${base}/nope`)).status).toBe(404);
     await close();

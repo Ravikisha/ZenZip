@@ -137,6 +137,8 @@ pub struct JsMachineOptions {
 pub struct JsTriggerOptions {
     pub idempotency_key: Option<String>,
     pub delay_ms: Option<f64>,
+    /// Data-subject tag for PII purge (P14.6).
+    pub subject: Option<String>,
 }
 
 /// One execution attempt request handed to the JS executor.
@@ -429,6 +431,7 @@ impl ZenRuntime {
         let opts = options.unwrap_or(JsTriggerOptions {
             idempotency_key: None,
             delay_ms: None,
+            subject: None,
         });
         self.core
             .engine()
@@ -437,6 +440,7 @@ impl ZenRuntime {
                 input,
                 opts.idempotency_key,
                 opts.delay_ms.unwrap_or(0.0) as i64,
+                opts.subject,
             )
             .map_err(err)
     }
@@ -761,6 +765,18 @@ impl ZenRuntime {
         let store = self.core.store();
         let n = store
             .purge_dead(&queue)
+            .await
+            .map_err(|e| err(e.to_string()))?;
+        Ok(n as f64)
+    }
+
+    /// PII purge (P14.6): delete all runs + steps tagged with `subject`.
+    #[napi]
+    pub async fn purge_subject(&self, subject: String) -> Result<f64> {
+        let n = self
+            .core
+            .store()
+            .purge_subject(&subject)
             .await
             .map_err(|e| err(e.to_string()))?;
         Ok(n as f64)

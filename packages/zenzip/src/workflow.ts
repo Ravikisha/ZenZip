@@ -104,6 +104,11 @@ export interface TriggerOptions {
   idempotencyKey?: string;
   /** Delay the first execution. */
   delay?: Duration;
+  /**
+   * Data-subject tag (P14.6) — e.g. a user id. Tagged runs (+ their steps) can
+   * be erased on request via `app.purgeSubject(subject)` for GDPR/PII.
+   */
+  subject?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -374,6 +379,7 @@ export class Workflow<I = unknown, O = unknown> {
     const runId = this.app._native.triggerWorkflow(this.name, JSON.stringify(input ?? null), {
       idempotencyKey: options.idempotencyKey,
       delayMs: options.delay !== undefined ? ms(options.delay) : undefined,
+      subject: options.subject,
     });
     this.app._audit("workflow.trigger", this.name, { runId });
     return { runId };

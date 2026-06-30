@@ -213,6 +213,7 @@ impl WorkflowEngine {
         input: String,
         idempotency_key: Option<String>,
         delay_ms: i64,
+        subject: Option<String>,
     ) -> Result<String, String> {
         let version = self.config(workflow).and_then(|c| c.version);
         let (run_id, created) = self
@@ -224,6 +225,7 @@ impl WorkflowEngine {
                 idempotency_key,
                 parent_run_id: None,
                 parent_step_id: None,
+                subject,
             })
             .map_err(|e| e.to_string())?;
         if created {
@@ -491,6 +493,7 @@ impl WorkflowEngine {
                 idempotency_key: Some(idem),
                 parent_run_id: Some(run.id.clone()),
                 parent_step_id: Some(step_id.to_string()),
+                subject: None,
             })
             .await
             .map_err(|e| e.to_string())?;

@@ -18,6 +18,13 @@ import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
+import { AnimatedShinyText } from "@/components/ui/animated-shiny-text";
+import { BentoCard, BentoGrid } from "@/components/ui/bento-grid";
+import { BorderBeam } from "@/components/ui/border-beam";
+import { DotPattern } from "@/components/ui/dot-pattern";
+import { Marquee } from "@/components/ui/marquee";
+import { Spotlight } from "@/components/ui/spotlight";
+import { cn } from "@/lib/utils";
 
 const heroCode = `import { zenzip } from "zenzip";
 
@@ -124,7 +131,7 @@ const stats = [
   { value: "409k/s", label: "Rust→JS handler dispatches (pipelined ×256)" },
   { value: "14 ns", label: "sync NAPI boundary call" },
   { value: "209k/s", label: "SQLite WAL job inserts (batched)" },
-  { value: "51", label: "tests green across Rust + TS" },
+  { value: "190+", label: "tests green across Rust + TS" },
 ];
 
 const phases = [
@@ -134,6 +141,10 @@ const phases = [
   { name: "Phase 3 — Events, machines, dashboard", status: "done" },
   { name: "Phase 4 — Agent engine", status: "done" },
   { name: "Phase 5 — Postgres multi-node", status: "done" },
+  { name: "Phase 7 — Production hardening", status: "done" },
+  { name: "Phase 8 — Express-native DX", status: "done" },
+  { name: "Phase 9 — AI depth (MCP, evals)", status: "done" },
+  { name: "Phase 10 — Flow control & scale", status: "done" },
 ];
 
 export default function Home() {
@@ -143,15 +154,22 @@ export default function Home() {
       <main className="flex-1">
         {/* Hero */}
         <section className="relative overflow-hidden">
+          <Spotlight className="-top-40 left-0 md:-top-20 md:left-60" />
+          <DotPattern className="[mask-image:radial-gradient(60%_50%_at_50%_0%,#000,transparent)] opacity-60" />
           <div
             aria-hidden
             className="pointer-events-none absolute inset-x-0 -top-40 h-[480px] bg-[radial-gradient(ellipse_60%_50%_at_50%_0%,rgba(139,92,246,0.18),transparent)]"
           />
-          <div className="mx-auto grid max-w-7xl items-center gap-14 px-5 pb-20 pt-16 lg:grid-cols-2 lg:pt-24">
+          <div className="relative mx-auto grid max-w-7xl items-center gap-14 px-5 pb-20 pt-16 lg:grid-cols-2 lg:pt-24">
             <div>
-              <Badge variant="accent">
-                <Zap className="size-3" /> Rust core · zero infrastructure
-              </Badge>
+              <div className="inline-flex items-center rounded-full border border-edge bg-surface/60 px-1 py-0.5 backdrop-blur">
+                <Badge variant="accent">
+                  <Zap className="size-3" /> Rust core · zero infrastructure
+                </Badge>
+                <AnimatedShinyText className="px-3 text-xs">
+                  190+ tests green · pre-1.0
+                </AnimatedShinyText>
+              </div>
               <h1 className="mt-5 text-4xl font-bold leading-[1.1] tracking-tight text-ink sm:text-5xl">
                 The agent-native backend framework{" "}
                 <span className="bg-gradient-to-r from-violet-400 via-fuchsia-400 to-violet-300 bg-clip-text text-transparent">
@@ -175,12 +193,15 @@ export default function Home() {
               <div className="mt-8 max-w-md">
                 <CommandLine command="npm install zenzip" />
                 <p className="mt-2 text-xs text-ink-dim">
-                  Pre-1.0 alpha — building in the open. Phases 0–2 shipped and
-                  tested.
+                  Pre-1.0, building in the open. Phases 0–10 shipped — durable
+                  engine, agents, flow control, encryption, all chaos-tested.
                 </p>
               </div>
             </div>
-            <CodeBlock code={heroCode} filename="app.ts" />
+            <div className="relative rounded-xl">
+              <CodeBlock code={heroCode} filename="app.ts" />
+              <BorderBeam size={70} duration={9} />
+            </div>
           </div>
         </section>
 
@@ -220,6 +241,24 @@ export default function Home() {
                 ))}
               </div>
             </div>
+            <div className="relative mt-12 overflow-hidden">
+              <Marquee pauseOnHover className="[--duration:30s]">
+                {replaced.map((item) => (
+                  <div
+                    key={item.tool}
+                    className="flex items-center gap-2 rounded-full border border-edge bg-surface px-4 py-2 text-sm"
+                  >
+                    <span className="text-ink-dim line-through decoration-zinc-600">
+                      {item.tool}
+                    </span>
+                    <ArrowRight className="size-3.5 text-ink-dim" />
+                    <span className="font-mono text-xs text-accent-soft">{item.replacement}</span>
+                  </div>
+                ))}
+              </Marquee>
+              <div className="pointer-events-none absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-background" />
+              <div className="pointer-events-none absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-background" />
+            </div>
           </div>
         </section>
 
@@ -236,25 +275,25 @@ export default function Home() {
               engine — every feature inherits leases, retries, and recovery.
             </p>
           </div>
-          <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {features.map((feature) => (
-              <Link
+          <BentoGrid className="mt-10">
+            {features.map((feature, i) => (
+              <BentoCard
                 key={feature.title}
+                name={feature.title}
+                description={feature.body}
+                Icon={feature.icon}
                 href={feature.href}
-                className="group rounded-2xl border border-edge bg-surface p-6 transition-colors hover:border-accent/40"
+                className={cn(i === 0 && "md:col-span-2", i === 3 && "md:col-span-2")}
               >
-                <div className="grid size-10 place-items-center rounded-lg border border-edge bg-surface-2 text-accent-soft">
-                  <feature.icon className="size-5" />
-                </div>
-                <h3 className="mt-4 font-semibold text-ink group-hover:text-accent-soft">
-                  {feature.title}
-                </h3>
-                <p className="mt-2 text-sm leading-6 text-ink-mid">
-                  {feature.body}
-                </p>
-              </Link>
+                {i === 0 && (
+                  <>
+                    <DotPattern className="opacity-50 [mask-image:radial-gradient(220px_circle_at_top_right,#000,transparent)]" />
+                    <BorderBeam size={60} duration={8} />
+                  </>
+                )}
+              </BentoCard>
             ))}
-          </div>
+          </BentoGrid>
         </section>
 
         {/* Code tour */}

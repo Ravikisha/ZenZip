@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Cancel superseded runs on the same ref so pushes don't pile up.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -58,7 +63,7 @@ jobs:
       - run: pnpm --filter zenzip exec vitest run test/pg.test.ts
 
   native:
-    name: Native build + bench smoke (${{ matrix.os }})
+    name: Native build + JS tests + bench smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -77,8 +82,46 @@ jobs:
       - run: pnpm build:native
       - run: pnpm --filter zenzip build
       - run: pnpm --filter zenzip test
-      - name: Bench smoke (sqlite + tsfn, reduced iterations)
+      - name: Bench smoke (sqlite + tsfn)
         run: |
           node bench/sqlite.mjs
           node bench/tsfn.mjs
         shell: bash
+
+  docs:
+    name: Docs site (lint + typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+      - run: npm ci
+      - run: npx eslint .
+      - run: npx tsc --noEmit
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_SITE_URL: https://zenzip.vercel.app
+
+  audit:
+    name: Supply-chain audit (advisory)
+    runs-on: ubuntu-latest
+    # Advisories shouldn't block merges — surfaced, not gating (P7.18).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-audit
+      - name: cargo audit
+        run: cargo audit
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: pnpm audit
+        run: pnpm install --frozen-lockfile && pnpm audit --prod || true

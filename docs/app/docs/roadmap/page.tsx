@@ -191,8 +191,8 @@ export default function Page() {
         <Item status="done">Dashboard RBAC (P7.17): operator vs read-only viewer tokens — viewers get 403 on mutating endpoints; timing-safe</Item>
         <Item status="done">SSRF allowlist (P7.16): assertPublicUrl resolve-then-validate (blocks private/loopback/link-local/metadata + v4-mapped); wired into mcp(), exported for tool authors</Item>
         <Item status="done">Payload encryption at rest (P7.15): opt-in encryptionKey → AES-256-GCM on job payloads, run input/output, step results, event payloads; transparent enable (enc:1: sentinel keeps legacy plaintext readable); validated SQLite + Postgres + JS</Item>
-        <Item status="todo">Security (7D): SLSA-L2 signed releases</Item>
-        <Item status="todo">Packaging (7E): full prebuild matrix incl. musl, WASM/WASI fallback, bundler/serverless recipes</Item>
+        <Item status="partial">Security (7D): release CI writes npm build provenance (SLSA-aligned, OIDC) + CycloneDX SBOM — needs a tagged release to validate; Sigstore signing remains</Item>
+        <Item status="partial">Packaging (7E): prebuild matrix now includes musl (zig cross-compile) for Alpine/Docker — needs a release run; WASM/WASI fallback + bundler/serverless recipes remain</Item>
       </ul>
 
       <PhaseHeader id="phase-8" title="Phase 8 — Express-native DX layer" badge="in progress" variant="accent" />
@@ -215,8 +215,10 @@ export default function Page() {
         <Item status="done">MCP consume (P9.2a): mcp(url) connects over Streamable HTTP, lists tools, exposes them as durable agent tools (prefix, headers, session)</Item>
         <Item status="done">MCP author (P9.2b): app.mcpServer() / app.mcpHandler() expose workflows + agents as an MCP server (allowlists, token auth, sync-wait or fire-and-forget)</Item>
         <Item status="done">Provider cost tables (P9.7): per-model pricing registry → result.costUsd dollar accounting; registerPricing override; openaiCompatible covers OpenAI-compatible providers</Item>
-        <Item status="todo">Tiered agent memory (P9.3): semantic recall, working memory, observational compression</Item>
-        <Item status="todo">Built-in evals (P9.5); multi-agent networks (P9.6); native Google/Bedrock adapters (P9.7 breadth)</Item>
+        <Item status="done">Tiered agent memory (P9.3): semantic recall (embeddings + vector store) + working-memory compression; AgentMemory + openaiEmbeddings/mockEmbeddings + pluggable MemoryStore</Item>
+        <Item status="done">Multi-agent networks (P9.6): app.network() — a durable coordinator routes among N specialist agents via handoff child-workflows</Item>
+        <Item status="done">Built-in evals (P9.5): rule-based (contains/matches/equals/jsonValid) + statistical (similarity) + model-graded (llmJudge) evaluators; evaluate() + runEvals() suite runner to gate deploys / regression-test prompts</Item>
+        <Item status="done">Provider breadth (P9.7): googleGemini() (generateContent) + bedrock() (Anthropic-on-Bedrock, SigV4-signed, no AWS SDK)</Item>
       </ul>
 
       <PhaseHeader id="phase-10" title="Phase 10 — Flow control & scale" badge="in progress" variant="accent" />
@@ -244,8 +246,16 @@ export default function Page() {
         <Item status="done">HTTP rate limiting (P13.4): zenzip.rateLimit() fixed-window per key → 429 + X-RateLimit headers</Item>
         <Item status="done">Config hardening (P13.5): boot-time validateConfig() fail-fast + redactUrl() secret masking</Item>
         <Item status="done">Audit log (P13.6): onAudit sink records workflow trigger/cancel, requeue-dead, agent approve/deny — &#123; action, target, at, detail &#125;</Item>
-        <Item status="partial">Control plane (P14.1): queue.purgeDead() + queue.pause()/resume()/isPaused() shipped (pause in-process per node); bulk cancel-by-filter remains</Item>
-        <Item status="todo">CSRF (P13.3); alerting (P14.2); circuit breakers / PG resilience / poison (P15.2/4/5); Docker/Helm/integrations (P16)</Item>
+        <Item status="done">Control plane (P14.1): queue.purgeDead() + pause()/resume()/isPaused() + app.cancelRuns(&#123; workflow, status, olderThan &#125;) bulk cancel-by-filter</Item>
+        <Item status="done">CSRF (P13.3): zenzip.csrf() origin/referer guard on state-changing methods (SameSite-compatible)</Item>
+        <Item status="done">Alerting (P14.2): app alerts hook fires on DLQ growth + stuck runs; typed error envelope + error&rarr;HTTP mapping + HttpError (P16.5)</Item>
+        <Item status="done">Poison messages (P15.5): crash-looping jobs are quarantined to the DLQ by the lease + attempt-counter path (and surfaced via the DLQ alert)</Item>
+        <Item status="done">Circuit breakers + bulkheads (P15.2): circuitBreaker() primitive (open/half-open/closed + concurrency cap) wired into agent LLM calls; exported for wrapping any external call</Item>
+        <Item status="partial">Deploy (P16.1/16.2): reference Dockerfile (musl/Alpine, non-root, healthcheck) + k8s StatefulSet + Helm chart with /healthz·/readyz probes shipped in deploy/ — needs a real cluster to validate</Item>
+        <Item status="done">Secrets hardening (P13.5): resolveSecret(env:/file:) + redactSecrets() deep masking</Item>
+        <Item status="done">Multi-tenancy (P14.5): app.namespace() scopes queues/workflows/agents/events with a tenant prefix</Item>
+        <Item status="done">PII purge (P14.6): subject-tagged runs (wf.trigger with a subject) erased via app.purgeSubject() — runs + steps, SQLite + Postgres</Item>
+        <Item status="done">Log/error integrations (P16.4): pinoLogger/winstonLogger transports + sentryReporter + captureErrors middleware + onError hook</Item>
       </ul>
 
       <H2 id="backlog">Post-1.0 backlog (deliberately parked)</H2>

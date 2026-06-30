@@ -63,6 +63,8 @@ export declare class ZenRuntime {
   isQueuePaused(queue: string): boolean
   /** Bulk control-plane op (P14.1): delete all dead-lettered jobs for a queue. */
   purgeDead(queue: string): Promise<number>
+  /** PII purge (P14.6): delete all runs + steps tagged with `subject`. */
+  purgeSubject(subject: string): Promise<number>
 }
 
 export declare function asyncAdd(a: number, b: number): Promise<number>
@@ -191,6 +193,8 @@ export interface JsTransition {
 export interface JsTriggerOptions {
   idempotencyKey?: string
   delayMs?: number
+  /** Data-subject tag for PII purge (P14.6). */
+  subject?: string
 }
 
 export interface JsWorkflowOptions {

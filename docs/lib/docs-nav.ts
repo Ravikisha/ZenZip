@@ -36,6 +36,7 @@ export const docsNav: NavGroup[] = [
       { title: "HTTP & Dashboard", href: "/docs/http-dashboard" },
       { title: "Express & Middleware", href: "/docs/express" },
       { title: "Configuration", href: "/docs/configuration" },
+      { title: "Production & Deployment", href: "/docs/production" },
     ],
   },
   {

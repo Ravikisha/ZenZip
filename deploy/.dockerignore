@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+target
+**/dist
+.git
+.github
+docs
+bench
+examples
+*.md
+.zenzip
+*.db
+*.db-*

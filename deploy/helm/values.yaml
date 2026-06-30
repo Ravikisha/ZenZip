@@ -1,0 +1,34 @@
+# ZenZip app Helm values (P16.2).
+image:
+  repository: my-zenzip-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Embedded SQLite (single-writer) → replicas MUST be 1 and persistence enabled.
+# Multi-node → set postgres.enabled: true, raise replicas, disable persistence.
+replicas: 1
+
+ports:
+  http: 3000
+  dashboard: 4100
+
+# Embedded SQLite store on a PersistentVolume.
+persistence:
+  enabled: true
+  size: 5Gi
+  mountPath: /data
+
+# Multi-node: point the app at Postgres instead of the volume.
+postgres:
+  enabled: false
+  urlSecret: "" # name of a Secret with key DATABASE_URL
+
+# Payload encryption key (P7.15) from a Secret (never inline).
+encryption:
+  secretName: "" # Secret with key encryptionKey
+
+resources:
+  requests: { cpu: 100m, memory: 128Mi }
+  limits: { cpu: "1", memory: 512Mi }
+
+terminationGracePeriodSeconds: 30

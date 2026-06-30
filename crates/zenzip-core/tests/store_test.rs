@@ -284,6 +284,7 @@ fn new_run() -> NewRun {
         idempotency_key: None,
         parent_run_id: None,
         parent_step_id: None,
+        subject: None,
     }
 }
 
@@ -548,6 +549,37 @@ async fn gc_removes_aged_terminal_runs_steps_and_events() {
     let none = store.gc(None, None).await.unwrap();
     assert_eq!(none.runs, 0);
     assert_eq!(none.events, 0);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn purge_subject_erases_a_subjects_runs_and_steps() {
+    let (store, dir) = temp_store("purge-subj");
+    let mk = |subject: &str| NewRun {
+        workflow: "wf".into(),
+        input: "{}".into(),
+        version: None,
+        idempotency_key: None,
+        parent_run_id: None,
+        parent_step_id: None,
+        subject: Some(subject.into()),
+    };
+    let (r1, _) = store.create_run(mk("user-1")).await.unwrap();
+    let (r2, _) = store.create_run(mk("user-1")).await.unwrap();
+    let (r3, _) = store.create_run(mk("user-2")).await.unwrap();
+    store
+        .record_step(&r1, "s1", "run", Some("{}".into()))
+        .await
+        .unwrap();
+
+    // PII erasure (P14.6): both of user-1's runs + steps go; user-2 untouched.
+    let purged = store.purge_subject("user-1").await.unwrap();
+    assert_eq!(purged, 2);
+    assert!(store.get_run(&r1).await.unwrap().is_none());
+    assert!(store.get_run(&r2).await.unwrap().is_none());
+    assert!(store.get_run(&r3).await.unwrap().is_some());
+    assert!(store.load_journal(&r1).await.unwrap().is_empty());
 
     let _ = std::fs::remove_dir_all(dir);
 }

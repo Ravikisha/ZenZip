@@ -246,15 +246,49 @@ export function runMiddleware(
   next();
 }
 
-/** Terminal error writer when no error middleware handled the failure. */
+/**
+ * Throw this from a handler/middleware for an explicit HTTP status + code
+ * (P16.5): `throw new HttpError(409, "already exists", "CONFLICT")`. Any thrown
+ * value still maps sensibly via `finalError` — this just makes it deliberate.
+ */
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+    readonly code?: string,
+  ) {
+    super(message);
+    this.name = "HttpError";
+  }
+}
+
+// Map framework error types to HTTP status (P16.5) — saturation/availability
+// failures are 503, validation is 400, the rest fall through to 500.
+const STATUS_BY_NAME: Record<string, number> = {
+  QueueFullError: 503,
+  CircuitOpenError: 503,
+  BulkheadFullError: 503,
+  ValidationError: 400,
+};
+
+/**
+ * Terminal error writer (P16.5): emits a typed envelope
+ * `{ error, code, status }`. Status comes from an explicit `status`/`statusCode`
+ * on the error, else a known framework error type, else 500. `error` stays a
+ * plain message string for back-compat; `code` and `status` are additive.
+ */
 export function finalError(err: unknown, res: ServerResponse): void {
   if (res.headersSent) return;
+  const e = err as { status?: unknown; statusCode?: unknown; code?: string; name?: string };
   const status =
-    typeof (err as { status?: unknown })?.status === "number"
-      ? (err as { status: number }).status
-      : 500;
+    typeof e?.status === "number"
+      ? e.status
+      : typeof e?.statusCode === "number"
+        ? e.statusCode
+        : (e?.name && STATUS_BY_NAME[e.name]) || 500;
   const message = err instanceof Error ? err.message : String(err);
+  const code = e?.code ?? (err instanceof Error ? err.name : undefined);
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
-  res.end(JSON.stringify({ error: message }));
+  res.end(JSON.stringify({ error: message, code, status }));
 }

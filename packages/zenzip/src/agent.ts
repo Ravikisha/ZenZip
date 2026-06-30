@@ -17,6 +17,8 @@ import {
   type LlmUsage,
 } from "./llm/types.js";
 import { costOf } from "./llm/pricing.js";
+import type { AgentMemory } from "./memory.js";
+import { CircuitBreaker, type CircuitBreakerOptions } from "./resilience.js";
 import type { Step, Workflow } from "./workflow.js";
 import type { StandardSchemaV1 } from "./types.js";
 import type { ZenzipApp } from "./app.js";
@@ -113,6 +115,18 @@ export interface AgentOptions {
   stepRetries?: number;
   /** Execution lease — raise for slow models. Default: 5m */
   lease?: Duration;
+  /**
+   * Circuit breaker around LLM provider calls (P15.2). When the provider keeps
+   * failing, the breaker opens and runs fail fast instead of hammering a dead
+   * dependency, then probes for recovery. Process-local, shared across this
+   * agent's runs.
+   */
+  circuitBreaker?: CircuitBreakerOptions;
+  /**
+   * Tiered memory (P9.3): semantic recall of relevant past turns + working-
+   * memory compression of long sessions. Build with `new AgentMemory({...})`.
+   */
+  memory?: AgentMemory;
 }
 
 export interface AgentRunInput {
@@ -155,6 +169,10 @@ export class Agent<TOutput = unknown> {
   ) {
     this.#app = app;
     const streams = this.#streams;
+    // Process-local LLM circuit breaker, shared across this agent's runs (P15.2).
+    const breaker = options.circuitBreaker
+      ? new CircuitBreaker({ name: `agent:${name}:llm`, ...options.circuitBreaker })
+      : undefined;
     this._workflow = app.workflow<AgentRunInput, AgentResult>(
       `agent:${name}`,
       {
@@ -162,7 +180,7 @@ export class Agent<TOutput = unknown> {
         stepRetries: options.stepRetries ?? 2,
         lease: options.lease ?? "5m",
       },
-      (ctx) => runAgentLoop(app, name, options, streams, ctx),
+      (ctx) => runAgentLoop(app, name, options, streams, ctx, breaker),
     );
   }
 
@@ -227,6 +245,7 @@ async function runAgentLoop(
   options: AgentOptions,
   streams: Map<string, (token: string) => void>,
   ctx: { step: Step; input: AgentRunInput; runId: string },
+  breaker?: CircuitBreaker,
 ): Promise<AgentResult> {
   const { step, input, runId } = ctx;
   const provider = options.provider;
@@ -248,10 +267,32 @@ async function runAgentLoop(
     return messages.slice(-window);
   });
 
-  const messages: LlmMessage[] = [
+  // Semantic recall (P9.3): pull relevant long-term memories for this prompt
+  // and inject them before the user turn. Journaled, so replays are stable.
+  let recalled: string[] = [];
+  if (options.memory) {
+    recalled = await step.run("memory-recall", () =>
+      options.memory!.recall(input.message, input.sessionId),
+    );
+  }
+
+  let messages: LlmMessage[] = [
     ...history,
+    ...(recalled.length
+      ? ([
+          {
+            role: "user",
+            content: [{ type: "text", text: `[memory] Relevant context:\n${recalled.join("\n")}` }],
+          },
+        ] as LlmMessage[])
+      : []),
     { role: "user", content: [{ type: "text", text: input.message }] },
   ];
+
+  // Working memory (P9.3): compress older turns into a summary when configured.
+  if (options.memory) {
+    messages = await step.run("memory-compress", () => options.memory!.compress(messages));
+  }
 
   const usage = { inputTokens: 0, outputTokens: 0 };
   let iterations = 0;
@@ -273,9 +314,12 @@ async function runAgentLoop(
         maxTokens: options.maxTokens,
         temperature: options.temperature,
       };
-      return onToken && provider.stream
-        ? provider.stream(request, onToken)
-        : provider.complete(request);
+      const call = () =>
+        onToken && provider.stream
+          ? provider.stream(request, onToken)
+          : provider.complete(request);
+      // Fail fast through the circuit breaker when the provider is down (P15.2).
+      return breaker ? breaker.run(call) : call();
     });
 
     usage.inputTokens += response.usage.inputTokens;
@@ -433,6 +477,13 @@ async function runAgentLoop(
       }
     }
     output = check.value;
+  }
+
+  // Long-term memory (P9.3): store this Q/A for future semantic recall.
+  if (options.memory) {
+    await step.run("memory-remember", () =>
+      options.memory!.remember(`Q: ${input.message}\nA: ${finalText}`, input.sessionId),
+    );
   }
 
   // Persist the conversation (P4.7) — journaled, effectively-once.

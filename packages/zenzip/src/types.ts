@@ -44,6 +44,14 @@ export interface ZenzipOptions {
    */
   onAudit?: (entry: AuditEntry) => void;
   /**
+   * Error sink (P16.4): called when the engine surfaces an error it would
+   * otherwise only log — native log-callback errors and background-loop
+   * failures. Wire it to Sentry via `sentryReporter(Sentry)`. For HTTP handler
+   * errors use `captureErrors()` middleware; for failed jobs/runs use a DLQ
+   * `alerts` hook. Fire-and-forget; throwing is swallowed.
+   */
+  onError?: (err: Error, ctx: { source: string; [key: string]: unknown }) => void;
+  /**
    * Retention / GC (P7.6). A background sweep deletes aged terminal runs
    * (with their step journal) and old events so the store doesn't grow
    * unbounded. Defaults: keep 7 days of runs + events, sweep hourly. Set a
@@ -81,6 +89,33 @@ export interface ZenzipOptions {
    * Losing the key makes encrypted payloads unrecoverable.
    */
   encryptionKey?: string;
+  /**
+   * Operational alerting (P14.2). When set, a background loop watches for
+   * dead-letter-queue growth and stuck (orphaned) runs and calls `onAlert`.
+   * Wire it to PagerDuty/Slack/email — ZenZip just detects and notifies.
+   */
+  alerts?: {
+    onAlert: (alert: Alert) => void;
+    /** Check cadence. Default: "1m". */
+    interval?: Duration;
+    /** Fire a DLQ alert once a queue's dead count reaches this. Default: 1. */
+    dlqThreshold?: number;
+    /** "Stuck" run threshold passed to orphanedRuns(). Default: "5m". */
+    idle?: Duration;
+  };
+}
+
+/** An operational alert (P14.2). */
+export interface Alert {
+  type: "dlq" | "orphaned";
+  /** Human-readable summary. */
+  message: string;
+  /** Count of affected items (dead jobs / stuck runs). */
+  count: number;
+  /** Queue name (dlq alerts). */
+  queue?: string;
+  /** Affected run ids (orphaned alerts). */
+  runs?: string[];
 }
 
 /** Rows removed by a retention GC pass (P7.6). */

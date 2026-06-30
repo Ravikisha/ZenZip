@@ -1,7 +1,36 @@
 {
   "name": "zenzip",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Agent-native backend framework for Node.js: durable workflows, queues, schedules, events, and AI agents on a Rust-powered runtime with zero infrastructure.",
+  "keywords": [
+    "durable-workflows",
+    "queue",
+    "job-queue",
+    "task-queue",
+    "background-jobs",
+    "scheduler",
+    "cron",
+    "workflow-engine",
+    "durable-execution",
+    "ai-agents",
+    "rust",
+    "sqlite",
+    "postgres",
+    "inngest-alternative",
+    "temporal-alternative",
+    "bullmq-alternative"
+  ],
+  "license": "MIT",
+  "author": "ZenZip",
+  "homepage": "https://github.com/Ravikisha/ZenZip#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ravikisha/ZenZip.git",
+    "directory": "packages/zenzip"
+  },
+  "bugs": {
+    "url": "https://github.com/Ravikisha/ZenZip/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

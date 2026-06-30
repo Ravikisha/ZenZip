@@ -173,6 +173,10 @@ const MIGRATIONS: &[&str] = &[
     // claimable rows lets the non-windowed claim walk jobs in dispatch order
     // (queue + priority) and stop at LIMIT without a Sort node.
     "CREATE INDEX idx_jobs_ready ON jobs (queue, priority DESC, id) WHERE status = 0;",
+    // v9 — data-subject tag for PII purge (P14.6): index by subject so erasure
+    // is an index lookup, not a table scan.
+    "ALTER TABLE runs ADD COLUMN subject TEXT;
+     CREATE INDEX idx_runs_subject ON runs (subject);",
 ];
 
 /// Width of an event-outbox time partition, in ms (P10.4). One day: large
@@ -420,8 +424,8 @@ impl PgStore {
         let enc_input = crypto.enc(&run.input); // P7.15
         let inserted = sqlx::query(
             "INSERT INTO runs (id, workflow, status, input, version, idempotency_key,
-                               parent_run_id, parent_step_id, created_at, updated_at)
-             VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $8, $8)
+                               parent_run_id, parent_step_id, subject, created_at, updated_at)
+             VALUES ($1, $2, 0, $3, $4, $5, $6, $7, $9, $8, $8)
              ON CONFLICT DO NOTHING",
         )
         .bind(&id)
@@ -432,6 +436,7 @@ impl PgStore {
         .bind(&run.parent_run_id)
         .bind(&run.parent_step_id)
         .bind(now)
+        .bind(&run.subject)
         .execute(&mut **tx)
         .await
         .map_err(pg_err)?
@@ -568,6 +573,7 @@ impl PgStore {
                     idempotency_key: None,
                     parent_run_id: None,
                     parent_step_id: None,
+                    subject: None,
                 },
                 now,
                 crypto,
@@ -983,6 +989,23 @@ impl Store for PgStore {
 
     fn create_run_blocking(&self, run: NewRun) -> StoreResult<(String, bool)> {
         self.block(self.create_run(run))
+    }
+
+    async fn purge_subject(&self, subject: &str) -> StoreResult<u64> {
+        let mut tx = self.pool.begin().await.map_err(pg_err)?;
+        sqlx::query("DELETE FROM steps WHERE run_id IN (SELECT id FROM runs WHERE subject = $1)")
+            .bind(subject)
+            .execute(&mut *tx)
+            .await
+            .map_err(pg_err)?;
+        let runs = sqlx::query("DELETE FROM runs WHERE subject = $1")
+            .bind(subject)
+            .execute(&mut *tx)
+            .await
+            .map_err(pg_err)?
+            .rows_affected();
+        tx.commit().await.map_err(pg_err)?;
+        Ok(runs)
     }
 
     async fn get_run(&self, id: &str) -> StoreResult<Option<RunRow>> {

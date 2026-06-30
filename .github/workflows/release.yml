@@ -1,7 +1,10 @@
-# Release pipeline (P6.5/P6.6): build napi prebuilds for the full platform
-# matrix and publish to npm. Trigger: pushing a v* tag.
-# Needs: NPM_TOKEN secret. First run will need babysitting — prebuild
-# publishing always does.
+# Release pipeline (P6.5/P6.6, P7.18/P7.19): build napi prebuilds for the full
+# platform matrix — incl. musl (Alpine/Docker) — generate an SBOM, and publish
+# to npm with build provenance (SLSA-aligned). Trigger: pushing a v* tag.
+#
+# Needs: NPM_TOKEN secret. Provenance needs `id-token: write` + npm/pnpm running
+# under GitHub OIDC (automatic on GitHub-hosted runners). First run will need
+# babysitting — prebuild publishing always does.
 name: Release
 
 on:
@@ -11,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write # OIDC for npm provenance (SLSA build attestation)
 
 jobs:
   build:
@@ -30,6 +34,14 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - host: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+          # musl — the top install-failure mode on Alpine / distroless Docker (P7.19).
+          # Cross-compiled with zig so one runner produces both musl targets.
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            zig: true
+          - host: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            zig: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -43,9 +55,17 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Install zig (musl cross-compile)
+        if: ${{ matrix.settings.zig }}
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
       - run: pnpm install --frozen-lockfile
       - name: Build native module
-        run: pnpm --filter @zenzip/core-native exec napi build --platform --release --target ${{ matrix.settings.target }}
+        run: >-
+          pnpm --filter @zenzip/core-native exec napi build --platform --release
+          --target ${{ matrix.settings.target }}
+          ${{ matrix.settings.zig && '--zig' || '' }}
       - uses: actions/upload-artifact@v4
         with:
           name: binding-${{ matrix.settings.target }}
@@ -72,15 +92,26 @@ jobs:
         run: pnpm --filter @zenzip/core-native exec napi artifacts --dir ../../artifacts
       - name: Build TypeScript package
         run: pnpm --filter zenzip build
+      # Software Bill of Materials (P7.18): CycloneDX SBOM attached to the release.
+      - name: Generate SBOM (CycloneDX)
+        run: npx -y @cyclonedx/cyclonedx-npm --output-file sbom.json || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          if-no-files-found: warn
+      # `--provenance` publishes a signed SLSA build-provenance attestation to
+      # the npm registry (visible on the package page). Requires id-token: write.
       - name: Publish @zenzip/core-native (with platform packages)
         run: pnpm --filter @zenzip/core-native exec napi prepublish -t npm --skip-gh-release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
       - name: Publish zenzip
-        run: pnpm --filter zenzip publish --no-git-checks --access public
+        run: pnpm --filter zenzip publish --no-git-checks --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish create-zenzip-app
-        run: pnpm --filter create-zenzip-app publish --no-git-checks --access public
+        run: pnpm --filter create-zenzip-app publish --no-git-checks --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

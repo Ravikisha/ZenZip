@@ -260,7 +260,7 @@ async fn pg_workflow_survives_node_kill_with_exactly_once_steps(// P5.5 core cla
     for i in 0..10 {
         run_ids.push(
             a.engine()
-                .trigger_blocking("pipeline", format!("{i}"), None, 0)
+                .trigger_blocking("pipeline", format!("{i}"), None, 0, None)
                 .unwrap(),
         );
     }
@@ -371,7 +371,7 @@ async fn pg_event_emitted_on_one_node_wakes_a_run_on_another() {
 
     let run_id = a
         .engine()
-        .trigger_blocking("waiter", "null".into(), None, 0)
+        .trigger_blocking("waiter", "null".into(), None, 0, None)
         .unwrap();
     tokio::time::sleep(Duration::from_millis(600)).await;
 

@@ -154,7 +154,7 @@ describe("app.use() middleware", () => {
 
     const res = await fetch(`${base}/x`);
     expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "unhandled" });
+    expect(await res.json()).toMatchObject({ error: "unhandled" });
   });
 
   it("rejects use() after start and with no function", async () => {
@@ -506,7 +506,7 @@ describe("Web Fetch adapter — toFetchHandler() (P8.5)", () => {
 
     const boom = await handler(new Request("http://x/boom"));
     expect(boom.status).toBe(500);
-    expect(await boom.json()).toEqual({ error: "kaboom" });
+    expect(await boom.json()).toMatchObject({ error: "kaboom" });
   });
 });
 

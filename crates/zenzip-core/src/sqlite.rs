@@ -147,6 +147,10 @@ const MIGRATIONS: &[&str] = &[
         next_at  INTEGER NOT NULL,
         PRIMARY KEY (queue, tkey)
     );",
+    // v10 — data-subject tag for PII purge (P14.6): index by subject so erasure
+    // is an index lookup, not a table scan.
+    "ALTER TABLE runs ADD COLUMN subject TEXT;
+     CREATE INDEX idx_runs_subject ON runs (subject);",
 ];
 
 fn none_on_no_rows<T>(e: rusqlite::Error) -> StoreResult<Option<T>> {
@@ -252,8 +256,8 @@ impl SqliteStore {
         let inserted = conn
             .prepare_cached(
                 "INSERT INTO runs (id, workflow, status, input, version, idempotency_key,
-                               parent_run_id, parent_step_id, created_at, updated_at)
-             VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                               parent_run_id, parent_step_id, subject, created_at, updated_at)
+             VALUES (?1, ?2, 0, ?3, ?4, ?5, ?6, ?7, ?9, ?8, ?8)
              ON CONFLICT DO NOTHING",
             )?
             .execute(params![
@@ -265,6 +269,7 @@ impl SqliteStore {
                 run.parent_run_id,
                 run.parent_step_id,
                 now,
+                run.subject,
             ])?;
         if inserted == 0 {
             // Lost an idempotency race: fetch the winner.
@@ -456,6 +461,7 @@ impl SqliteStore {
                     idempotency_key: None,
                     parent_run_id: None,
                     parent_step_id: None,
+                    subject: None,
                 },
                 crypto,
             )?;
@@ -858,6 +864,24 @@ impl Store for SqliteStore {
 
     fn create_run_blocking(&self, run: NewRun) -> StoreResult<(String, bool)> {
         self.blocking(|conn| Self::create_run_inner(conn, run, &self.crypto))
+    }
+
+    async fn purge_subject(&self, subject: &str) -> StoreResult<u64> {
+        let subject = subject.to_string();
+        self.with_conn(move |conn| {
+            let tx = conn.transaction()?;
+            // Steps first (FK-free, but keep ordering intuitive), then runs.
+            tx.prepare_cached(
+                "DELETE FROM steps WHERE run_id IN (SELECT id FROM runs WHERE subject = ?1)",
+            )?
+            .execute(params![subject])?;
+            let runs = tx
+                .prepare_cached("DELETE FROM runs WHERE subject = ?1")?
+                .execute(params![subject])?;
+            tx.commit()?;
+            Ok(runs as u64)
+        })
+        .await
     }
 
     async fn get_run(&self, id: &str) -> StoreResult<Option<RunRow>> {
@@ -1542,6 +1566,7 @@ mod encryption_tests {
                 idempotency_key: None,
                 parent_run_id: None,
                 parent_step_id: None,
+                subject: None,
             })
             .await
             .unwrap();

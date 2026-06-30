@@ -117,11 +117,11 @@ async fn match_predicate_wakes_only_matching_waiter() {
 
     let run_a = rt
         .engine()
-        .trigger_blocking("collect", r#"{"invoice":"inv-a"}"#.into(), None, 0)
+        .trigger_blocking("collect", r#"{"invoice":"inv-a"}"#.into(), None, 0, None)
         .unwrap();
     let run_b = rt
         .engine()
-        .trigger_blocking("collect", r#"{"invoice":"inv-b"}"#.into(), None, 0)
+        .trigger_blocking("collect", r#"{"invoice":"inv-b"}"#.into(), None, 0, None)
         .unwrap();
     // Let both reach their waits.
     tokio::time::sleep(Duration::from_millis(400)).await;

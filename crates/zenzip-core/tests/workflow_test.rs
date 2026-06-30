@@ -67,7 +67,7 @@ async fn completes_a_simple_run() {
 
     let run_id = rt
         .engine()
-        .trigger_blocking("greet", r#"{"name":"zen"}"#.into(), None, 0)
+        .trigger_blocking("greet", r#"{"name":"zen"}"#.into(), None, 0, None)
         .unwrap();
     let run = rt
         .engine()
@@ -101,7 +101,7 @@ async fn sleep_suspends_and_resumes() {
     let started = now_ms();
     let run_id = rt
         .engine()
-        .trigger_blocking("napper", "null".into(), None, 0)
+        .trigger_blocking("napper", "null".into(), None, 0, None)
         .unwrap();
     let run = rt
         .engine()
@@ -140,7 +140,7 @@ async fn step_failure_retries_then_succeeds() {
 
     let run_id = rt
         .engine()
-        .trigger_blocking("flaky", "null".into(), None, 0)
+        .trigger_blocking("flaky", "null".into(), None, 0, None)
         .unwrap();
     let run = rt
         .engine()
@@ -168,7 +168,7 @@ async fn step_exhaustion_fails_the_run() {
 
     let run_id = rt
         .engine()
-        .trigger_blocking("doomed", "null".into(), None, 0)
+        .trigger_blocking("doomed", "null".into(), None, 0, None)
         .unwrap();
     let run = rt
         .engine()
@@ -207,7 +207,7 @@ async fn wait_for_event_wakes_on_emit() {
 
     let run_id = rt
         .engine()
-        .trigger_blocking("approval", "null".into(), None, 0)
+        .trigger_blocking("approval", "null".into(), None, 0, None)
         .unwrap();
     // Let it reach the suspension first.
     tokio::time::sleep(Duration::from_millis(300)).await;
@@ -251,7 +251,7 @@ async fn wait_for_event_times_out() {
 
     let run_id = rt
         .engine()
-        .trigger_blocking("patient", "null".into(), None, 0)
+        .trigger_blocking("patient", "null".into(), None, 0, None)
         .unwrap();
     let run = rt
         .engine()
@@ -293,7 +293,7 @@ async fn invoke_runs_child_and_returns_output() {
 
     let run_id = rt
         .engine()
-        .trigger_blocking("parent", "null".into(), None, 0)
+        .trigger_blocking("parent", "null".into(), None, 0, None)
         .unwrap();
     let run = rt
         .engine()
@@ -318,15 +318,15 @@ async fn idempotency_key_dedupes_runs() {
 
     let a = rt
         .engine()
-        .trigger_blocking("once", "null".into(), Some("key-1".into()), 0)
+        .trigger_blocking("once", "null".into(), Some("key-1".into()), 0, None)
         .unwrap();
     let b = rt
         .engine()
-        .trigger_blocking("once", "null".into(), Some("key-1".into()), 0)
+        .trigger_blocking("once", "null".into(), Some("key-1".into()), 0, None)
         .unwrap();
     let c = rt
         .engine()
-        .trigger_blocking("once", "null".into(), Some("key-2".into()), 0)
+        .trigger_blocking("once", "null".into(), Some("key-2".into()), 0, None)
         .unwrap();
     assert_eq!(a, b);
     assert_ne!(a, c);
@@ -360,7 +360,7 @@ async fn cancel_stops_a_sleeping_run() {
 
     let run_id = rt
         .engine()
-        .trigger_blocking("cancellable", "null".into(), None, 0)
+        .trigger_blocking("cancellable", "null".into(), None, 0, None)
         .unwrap();
     // Let it reach the sleep, then cancel before the wake.
     tokio::time::sleep(Duration::from_millis(150)).await;

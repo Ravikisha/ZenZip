@@ -164,7 +164,25 @@ export default function Page() {
             name: "logger",
             type: "(event: LogEvent) => void",
             description:
-              "Receive structured engine logs ({ level, target, message }). Without it, logs go to stderr.",
+              "Receive structured engine logs ({ level, target, message }). Use pinoLogger()/winstonLogger() adapters. Without it, logs go to stderr.",
+          },
+          {
+            name: "onError",
+            type: "(err, ctx) => void",
+            description:
+              "Error sink (P16.4): engine errors the runtime would otherwise only log (native log-callback + background-loop failures). Wire to Sentry via sentryReporter(Sentry).",
+          },
+          {
+            name: "onAudit",
+            type: "(entry: AuditEntry) => void",
+            description:
+              "Audit sink (P13.6): privileged actions — workflow trigger/cancel, DLQ requeue, agent approve/deny, runs.cancel, subject.purge.",
+          },
+          {
+            name: "alerts",
+            type: "{ onAlert; interval?; dlqThreshold?; idle? }",
+            description:
+              "Operational alerting (P14.2): background watch for DLQ growth + stuck runs → onAlert. Wire to PagerDuty/Slack.",
           },
           {
             name: "retention",
@@ -314,7 +332,32 @@ export default function Page() {
           timeout, a lost execution wakeup. They should be rare;{" "}
           <Code>zenzip doctor</Code> reports them too.
         </LI>
+        <LI>
+          <Strong>Bulk cancel (P14.1):</Strong>{" "}
+          <Code>app.cancelRuns(&#123; workflow, status, olderThan &#125;)</Code>{" "}
+          cancels every matching non-terminal run (and its children) — incident
+          response or draining before a breaking deploy.
+        </LI>
+        <LI>
+          <Strong>Alerting (P14.2):</Strong> set <Code>alerts</Code> and a
+          background loop watches for dead-letter-queue growth and stuck runs,
+          calling <Code>onAlert</Code> — wire it to PagerDuty/Slack/email.
+        </LI>
       </UL>
+      <CodeBlock
+        code={`const app = zenzip({
+  alerts: {
+    onAlert: (a) => pager.notify(a.message),   // { type, message, count, queue?, runs? }
+    interval: "1m",
+    dlqThreshold: 10,   // alert once a queue's DLQ reaches 10
+    idle: "5m",         // "stuck run" threshold
+  },
+});
+
+// Bulk-cancel everything still running on a broken workflow:
+const { cancelled } = await app.cancelRuns({ workflow: "import", status: "running" });`}
+        filename="ops.ts"
+      />
 
       <H2 id="hardening">Config hardening</H2>
       <UL>

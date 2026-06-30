@@ -346,6 +346,71 @@ export function auth(options: AuthOptions): Middleware {
   };
 }
 
+export interface CsrfOptions {
+  /**
+   * Origins allowed to make state-changing requests. When omitted, requests
+   * must be same-origin (the request's Origin host must equal its Host header).
+   */
+  allowedOrigins?: string[];
+  /** Methods treated as safe (no check). Default: GET, HEAD, OPTIONS. */
+  safeMethods?: string[];
+}
+
+function originFromReferer(referer: string | undefined): string | undefined {
+  if (!referer) return undefined;
+  try {
+    return new URL(referer).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * CSRF protection (P13.3). For state-changing methods, validates the request's
+ * Origin (falling back to Referer) — the modern defense that pairs with
+ * SameSite cookies and needs no per-form token. With `allowedOrigins`, only
+ * those origins may mutate; without it, the request must be same-origin. Safe
+ * methods (GET/HEAD/OPTIONS) pass through. Token-authenticated APIs (Bearer,
+ * not cookies) are not CSRF-exposed — apply this to cookie-session routes.
+ */
+export function csrf(options: CsrfOptions = {}): Middleware {
+  const safe = new Set(
+    (options.safeMethods ?? ["GET", "HEAD", "OPTIONS"]).map((m) => m.toUpperCase()),
+  );
+  const allowed = options.allowedOrigins;
+  return (req, res, next) => {
+    if (safe.has((req.method ?? "GET").toUpperCase())) {
+      next();
+      return;
+    }
+    const origin = req.get("origin") ?? originFromReferer(req.get("referer"));
+    if (!origin) {
+      res.status(403).json({ error: "CSRF: missing Origin/Referer on a state-changing request" });
+      return;
+    }
+    if (allowed) {
+      if (!allowed.includes(origin)) {
+        res.status(403).json({ error: "CSRF: origin not allowed" });
+        return;
+      }
+    } else {
+      // No allowlist → require same-origin.
+      const host = req.get("host");
+      let originHost: string | undefined;
+      try {
+        originHost = new URL(origin).host;
+      } catch {
+        /* malformed */
+      }
+      if (!host || originHost !== host) {
+        res.status(403).json({ error: "CSRF: cross-origin request rejected" });
+        return;
+      }
+    }
+    next();
+  };
+}
+
 export interface ValidateSchemas {
   /** Validate (and replace) the parsed request body. */
   body?: StandardSchemaV1;

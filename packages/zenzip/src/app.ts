@@ -7,6 +7,8 @@ import { startDashboard, type DashboardOptions } from "./dashboard.js";
 import { ms, type Duration } from "./duration.js";
 import { eventMatches } from "./events.js";
 import { Agent, type AgentOptions } from "./agent.js";
+import { Network, type NetworkOptions } from "./network.js";
+import { Namespace } from "./namespace.js";
 import {
   closeServer,
   HttpRouter,
@@ -26,6 +28,7 @@ import { Router } from "./router.js";
 import {
   auth,
   cors,
+  csrf,
   json,
   logger,
   rateLimit,
@@ -141,6 +144,9 @@ export class ZenzipApp {
   #native: ZenRuntime | null = null;
   #started = false;
   #signalHandler: (() => void) | null = null;
+  #alertTimer: ReturnType<typeof setInterval> | null = null;
+  /** Per-queue last DLQ size, so alerts fire on *growth*, not on every tick. */
+  readonly #lastDlq = new Map<string, number>();
 
   constructor(options: ZenzipOptions = {}) {
     this.#options = options;
@@ -245,6 +251,30 @@ export class ZenzipApp {
     return agent;
   }
 
+  /**
+   * A multi-agent network (P9.6): a coordinator that durably routes a request
+   * among `options.agents` specialists. Define members with `app.agent()`
+   * first, then compose them. Returns a {@link Network} whose `run`/`trigger`
+   * behave like an agent's.
+   */
+  network<TOutput = unknown>(name: string, options: NetworkOptions): Network<TOutput> {
+    if (this.#started) {
+      throw new Error("define networks before app.start()");
+    }
+    return new Network<TOutput>(this, name, options);
+  }
+
+  /**
+   * A namespace (P14.5): a scoped facade whose queues, workflows, schedules,
+   * agents, and events are all prefixed with `<name>:` for logical multi-tenant
+   * isolation within one store. One tenant's events never wake another's
+   * triggers. `const t = app.namespace(tenantId); t.queue("jobs")` →  a queue
+   * named `<tenantId>:jobs`.
+   */
+  namespace(name: string): Namespace {
+    return new Namespace(this, name);
+  }
+
   /** @internal Registered workflows (excludes hidden agent workflows). */
   _listWorkflows(): Workflow<any, any>[] {
     return [...this.#workflows.values()].filter((w) => !w.name.startsWith("agent:"));
@@ -263,6 +293,30 @@ export class ZenzipApp {
       sink({ action, target, at: Date.now(), detail });
     } catch {
       /* audit must never break the action it records */
+    }
+  }
+
+  /**
+   * Erase all runs (+ their step journal) tagged with `subject` (P14.6) —
+   * GDPR/PII "right to erasure". Tag runs at trigger time:
+   * `wf.trigger(input, { subject: userId })`, then `app.purgeSubject(userId)`.
+   * Returns the number of runs removed. (Encrypt payloads with `encryptionKey`
+   * and set `retention` to bound how long un-purged data lives.)
+   */
+  async purgeSubject(subject: string): Promise<number> {
+    const n = await this._native.purgeSubject(subject);
+    this._audit("subject.purge", subject, { runs: n });
+    return n;
+  }
+
+  /** @internal Report an engine error to the onError sink (P16.4). */
+  _reportError(err: unknown, ctx: { source: string; [key: string]: unknown }): void {
+    const sink = this.#options.onError;
+    if (!sink) return;
+    try {
+      sink(err instanceof Error ? err : new Error(String(err)), ctx);
+    } catch {
+      /* reporting must never break the path it observes */
     }
   }
 
@@ -559,6 +613,82 @@ export class ZenzipApp {
     return out;
   }
 
+  /**
+   * Bulk-cancel non-terminal runs matching a filter (P14.1) — the fleet-wide
+   * companion to `workflow.cancel(runId)`. Cancels each match and its child
+   * runs. Use for incident response ("cancel everything still running on the
+   * broken workflow") or draining before a breaking deploy.
+   */
+  async cancelRuns(
+    filter: {
+      workflow?: string;
+      status?: "running" | "sleeping" | "waitingEvent" | "waitingChild";
+      olderThan?: Duration;
+      limit?: number;
+    } = {},
+  ): Promise<{ cancelled: number; runs: string[] }> {
+    const statusNum = filter.status ? RUN_STATUS_NAMES.indexOf(filter.status) : undefined;
+    const raw = await this._native.dashboardRuns(
+      filter.workflow ?? undefined,
+      statusNum,
+      filter.limit ?? 1000,
+    );
+    const rows = JSON.parse(raw) as Array<{ id: string; status: number; updatedAt: number }>;
+    const cutoff = filter.olderThan !== undefined ? Date.now() - ms(filter.olderThan) : undefined;
+    const runs: string[] = [];
+    let cancelled = 0;
+    for (const r of rows) {
+      if (r.status > 3) continue; // already terminal
+      if (cutoff !== undefined && r.updatedAt >= cutoff) continue;
+      cancelled += this._native.cancelRun(r.id);
+      runs.push(r.id);
+    }
+    this._audit("runs.cancel", filter.workflow ?? "*", { count: runs.length, filter });
+    return { cancelled, runs };
+  }
+
+  /** Background alerting loop (P14.2) — started when `options.alerts` is set. */
+  #startAlerts(): void {
+    const cfg = this.#options.alerts;
+    if (!cfg) return;
+    const interval = cfg.interval !== undefined ? ms(cfg.interval) : 60_000;
+    const dlqThreshold = cfg.dlqThreshold ?? 1;
+    const tick = async () => {
+      if (!this.#native) return;
+      try {
+        // DLQ growth: fire when a queue's dead count rises past the threshold.
+        for (const name of this.#queues.keys()) {
+          const dead = (await this.#queues.get(name)!.deadJobs(1000)).length;
+          const prev = this.#lastDlq.get(name) ?? 0;
+          this.#lastDlq.set(name, dead);
+          if (dead >= dlqThreshold && dead > prev) {
+            cfg.onAlert({
+              type: "dlq",
+              queue: name,
+              count: dead,
+              message: `dead-letter queue "${name}" grew to ${dead} job(s)`,
+            });
+          }
+        }
+        // Stuck runs (reuses the P7.10 orphaned-run detector).
+        const orphaned = await this.orphanedRuns({ idle: cfg.idle });
+        if (orphaned.length > 0) {
+          cfg.onAlert({
+            type: "orphaned",
+            count: orphaned.length,
+            message: `${orphaned.length} run(s) stuck without progress`,
+            runs: orphaned.map((o) => o.runId),
+          });
+        }
+      } catch (err) {
+        // best-effort — never let the alert loop crash the app, but surface it
+        this._reportError(err, { source: "alert" });
+      }
+    };
+    this.#alertTimer = setInterval(() => void tick(), interval);
+    if (typeof this.#alertTimer.unref === "function") this.#alertTimer.unref();
+  }
+
   /** Embedded observability dashboard (default http://127.0.0.1:4100). */
   async dashboard(options: DashboardOptions = {}): Promise<{ port: number }> {
     if (!this.#started) {
@@ -664,9 +794,10 @@ export class ZenzipApp {
         eventRetentionMs: retentionMs(this.#options.retention?.events),
         encryptionKey: this.#options.encryptionKey,
       },
-      logger
+      logger || this.#options.onError
         ? (err: Error | null, event: LogEvent) => {
-            if (!err) logger(event);
+            if (err) this._reportError(err, { source: "log" });
+            else logger?.(event);
           }
         : undefined,
     );
@@ -803,6 +934,8 @@ export class ZenzipApp {
       process.once("SIGINT", this.#signalHandler);
       process.once("SIGTERM", this.#signalHandler);
     }
+
+    this.#startAlerts(); // P14.2 — no-op unless options.alerts is set
   }
 
   /** Graceful shutdown. Resolves true if all in-flight jobs drained in time. */
@@ -813,6 +946,10 @@ export class ZenzipApp {
     await Promise.all(this.#servers.splice(0).map((s) => closeServer(s, httpDrain)));
     const native = this.#native;
     if (!native) return true;
+    if (this.#alertTimer) {
+      clearInterval(this.#alertTimer);
+      this.#alertTimer = null;
+    }
     this.#native = null;
     this.#started = false;
     if (this.#signalHandler) {
@@ -850,6 +987,7 @@ export interface ZenzipFactory {
   json: typeof json;
   urlencoded: typeof urlencoded;
   cors: typeof cors;
+  csrf: typeof csrf;
   logger: typeof logger;
   static: typeof serveStatic;
   validate: typeof validate;
@@ -865,6 +1003,7 @@ export const zenzip: ZenzipFactory = Object.assign(
     json,
     urlencoded,
     cors,
+    csrf,
     logger,
     static: serveStatic,
     validate,
