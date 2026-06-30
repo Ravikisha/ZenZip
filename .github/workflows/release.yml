@@ -34,15 +34,16 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - host: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          # musl — the top install-failure mode on Alpine / distroless Docker (P7.19).
-          # Cross-compiled via napi-rs's bundled toolchain (--use-napi-cross),
-          # so one x86_64 runner produces both musl targets without Docker.
+          # musl — cross-compiled with zig so libsqlite3-sys (embedded C) can
+          # find a compiler. CC_* env vars wire cc-rs to zig cc.
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
             cross: true
+            cc: "zig cc -target x86_64-linux-musl"
           - host: ubuntu-latest
             target: aarch64-unknown-linux-musl
             cross: true
+            cc: "zig cc -target aarch64-linux-musl"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -51,6 +52,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.settings.target }}
+      - name: Install zig (musl cross-compile)
+        if: ${{ matrix.settings.cross }}
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -62,6 +68,9 @@ jobs:
           pnpm --filter @zenzip/core-native exec napi build --platform --release
           --target ${{ matrix.settings.target }}
           ${{ matrix.settings.cross && '--use-napi-cross' || '' }}
+        env:
+          CC_x86_64_unknown_linux_musl: ${{ matrix.settings.cc || '' }}
+          CC_aarch64_unknown_linux_musl: ${{ matrix.settings.cc || '' }}
       - uses: actions/upload-artifact@v4
         with:
           name: binding-${{ matrix.settings.target }}
