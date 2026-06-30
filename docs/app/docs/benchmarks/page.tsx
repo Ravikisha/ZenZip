@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 
 import { CodeBlock } from "@/components/code-block";
 import { DocPage } from "@/components/docs/doc-page";
@@ -45,7 +45,7 @@ export default function Page() {
   return (
     <DocPage
       title="Benchmarks"
-      description="Phase 0 measured the NAPI boundary, handler dispatch, HTTP, and SQLite before any engine code was written. These numbers shaped — and killed — design decisions."
+      description="ZenZip measured the NAPI boundary, handler dispatch, HTTP, and SQLite before writing engine code. These numbers shaped — and killed — design decisions."
       href="/docs/benchmarks"
       toc={toc}
     >
@@ -61,13 +61,13 @@ export default function Page() {
       <H2 id="why">Why benchmark first</H2>
       <P>
         ZenZip embeds Rust in Node, so every design hinges on one question:{" "}
-        <Strong>what does crossing the boundary cost?</Strong> Phase 0
-        answered it with four benchmarks before Phase 1 wrote a line of engine
-        code. The result is a set of hard rules:
+        <Strong>what does crossing the boundary cost?</Strong> ZenZip ran
+        four benchmarks before writing a line of engine code. The result is a
+        set of hard rules:
       </P>
       <CodeBlock code={rules} lang="text" className="mt-6" />
 
-      <H2 id="boundary">JS ↔ Rust boundary (P0.4)</H2>
+      <H2 id="boundary">JS ↔ Rust boundary</H2>
       <Table
         head={["Call", "Cost"]}
         rows={[
@@ -88,7 +88,7 @@ export default function Page() {
         protocol.
       </P>
 
-      <H2 id="tsfn">Handler dispatch — Rust → JS (P0.5)</H2>
+      <H2 id="tsfn">Handler dispatch — Rust → JS</H2>
       <P>
         100,000 round-trips: Rust calls a JS callback and awaits the returned
         value (the shape of every queue/workflow handler invocation):
@@ -109,7 +109,7 @@ export default function Page() {
         your own handler code saturate far earlier.
       </P>
 
-      <H2 id="http">The HTTP no-go (P0.6)</H2>
+      <H2 id="http">The HTTP no-go</H2>
       <P>
         The original idea included a Rust HTTP server (&ldquo;faster than
         Fastify&rdquo;). We benchmarked hello-world with the load generator in
@@ -142,9 +142,9 @@ export default function Page() {
         </LI>
       </UL>
 
-      <H2 id="compare">Feature-for-feature: vs Express &amp; Fastify (P10.5)</H2>
+      <H2 id="compare">Feature-for-feature: vs Express &amp; Fastify</H2>
       <P>
-        Phase 0 killed the Rust HTTP server — ZenZip&apos;s HTTP is a thin{" "}
+        Early benchmarks killed the Rust HTTP server idea — ZenZip&apos;s HTTP is a thin{" "}
         <Code>node:http</Code> adapter, not a speed play. So the fair question
         isn&apos;t &ldquo;is it the fastest router&rdquo; but &ldquo;what does
         the adapter cost you against the two frameworks people actually
@@ -179,7 +179,7 @@ export default function Page() {
           middleware chain.
         </LI>
         <LI>
-          <Strong>What closed the early gap (P10.7):</Strong> the adapter used
+          <Strong>What closed the early gap:</Strong> the adapter used
           to parse the request body on <em>every</em> request, so a body-less
           GET still paid for an <Code>await</Code> over the request stream (an
           extra event-loop turn each). Skipping the read for GET/HEAD/OPTIONS
@@ -188,7 +188,7 @@ export default function Page() {
           50–130%.
         </LI>
         <LI>
-          <Strong>The router is now a radix trie (P10.8)</Strong> — O(path
+          <Strong>The router is now a radix trie</Strong> — O(path
           depth) match with no per-request route-array allocation, replacing
           the old linear scan. On this 5-route microbench it&apos;s within
           noise of the linear version; the win grows with route count, and it
@@ -220,7 +220,7 @@ DURATION=5 ROUNDS=3 CONNECTIONS=64 node compare.mjs`}
         className="mt-6"
       />
 
-      <H2 id="sqlite">SQLite throughput (P0.7)</H2>
+      <H2 id="sqlite">SQLite throughput</H2>
       <Table
         head={["Operation", "Throughput"]}
         rows={[
@@ -238,7 +238,7 @@ DURATION=5 ROUNDS=3 CONNECTIONS=64 node compare.mjs`}
         for the multi-node story, not for throughput.
       </P>
 
-      <H2 id="pg-scale">Postgres at scale (P10.4)</H2>
+      <H2 id="pg-scale">Postgres at scale</H2>
       <P>
         Two changes lift the multi-node scale ceiling, both measured against a
         live Postgres rather than asserted:
@@ -247,7 +247,7 @@ DURATION=5 ROUNDS=3 CONNECTIONS=64 node compare.mjs`}
         <LI>
           <Strong>Partitioned event outbox.</Strong> The <Code>events</Code>{" "}
           table is RANGE-partitioned by <Code>emitted_at</Code> into fixed
-          one-day buckets. Retention GC (P7.6) now <Strong>drops a whole aged
+          one-day buckets. Retention GC now <Strong>drops a whole aged
           partition</Strong> — an instant <Code>DROP TABLE</Code> — instead of
           a row-by-row <Code>DELETE</Code> that scans and bloats at scale; a
           DEFAULT partition catches any un-bucketed row so correctness never

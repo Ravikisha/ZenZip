@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 
 import { CodeBlock } from "@/components/code-block";
 import { DocPage } from "@/components/docs/doc-page";
@@ -67,10 +67,10 @@ const dead = await emails.deadJobs();
 await emails.requeueDead();            // all of them
 await emails.requeueDead([dead[0].id]); // or specific ids
 
-// …or permanently discard them (P14.1):
+// …or permanently discard them:
 await emails.purgeDead();             // delete all dead jobs, returns the count
 
-// Pause/resume claiming (P14.1) — e.g. during an incident or maintenance:
+// Pause/resume claiming — e.g. during an incident or maintenance:
 emails.pause();                       // stop claiming; in-flight jobs finish
 emails.isPaused();                    // → true
 emails.resume();                      // start claiming again
@@ -162,7 +162,7 @@ export default function Page() {
             type: "number | { limit, key }",
             default: "10",
             description:
-              "Max handler invocations in flight. A number caps the whole queue; { limit, key: (data) => string } caps in-flight per key — e.g. 1 per user/tenant (P10.1).",
+              "Max handler invocations in flight. A number caps the whole queue; { limit, key: (data) => string } caps in-flight per key — e.g. 1 per user/tenant.",
           },
           {
             name: "retries",
@@ -291,7 +291,7 @@ export default function Page() {
         is computed at <Code>push</Code> from the job data.
       </P>
       <P>
-        <Strong>Fairness (P10.3):</Strong> add <Code>fair: true</Code> to
+        <Strong>Fairness:</Strong> add <Code>fair: true</Code> to
         round-robin claims across the concurrency-key groups, so one busy tenant
         can&apos;t starve the others — the claim batch takes one job per key
         before a second from any.

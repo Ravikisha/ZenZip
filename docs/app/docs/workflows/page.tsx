@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 
 import { CodeBlock } from "@/components/code-block";
 import { DocPage } from "@/components/docs/doc-page";
@@ -117,7 +117,7 @@ const run = await order.getRun(runId);
 // Cancel a run and all its child runs:
 await order.cancel(runId);
 
-// Realtime: stream status + step events until the run finishes (P9.4).
+// Realtime: stream status + step events until the run finishes.
 // Store-backed, so it works across processes — pipe it to SSE/WebSocket.
 for await (const u of app.subscribe(runId, { interval: 250 })) {
   console.log(u.status, u.steps.length); // ends when u.terminal
@@ -167,8 +167,7 @@ export default function Page() {
         </LI>
         <LI>
           Bound a slow step with{" "}
-          <Code>step.run(&quot;x&quot;, fn, &#123; timeout: &quot;30s&quot; &#125;)</Code>{" "}
-          (P15.1): overrunning fails the step (then retries) instead of wedging a
+          <Code>step.run(&quot;x&quot;, fn, &#123; timeout: &quot;30s&quot; &#125;)</Code>{" "}: overrunning fails the step (then retries) instead of wedging a
           worker slot. Pass an AbortSignal-aware <Code>fn</Code> to also cancel
           the underlying I/O.
         </LI>
@@ -191,8 +190,8 @@ export default function Page() {
         </LI>
         <LI>
           <Code>app.emit()</Code> wakes every run currently waiting on that
-          event name. Payload filters (match expressions) arrive with the
-          Phase 3 event bus.
+          event name. Payload filters (match expressions) are supported —
+          see the <A href="/docs/events">Events</A> page.
         </LI>
       </UL>
 

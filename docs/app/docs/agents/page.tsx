@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 
 import { CodeBlock } from "@/components/code-block";
 import { DocPage } from "@/components/docs/doc-page";
@@ -96,7 +96,7 @@ const transcript = await support.session("cus_7");  // LlmMessage[]`;
 
 const mcpCode = `import { mcp } from "zenzip";
 
-// CONSUME — connect to an MCP server and use its tools (P9.2a). Connecting is
+// CONSUME — connect to an MCP server and use its tools. Connecting is
 // async, so spread the result into the agent's tools:
 const app = zenzip();
 app.agent("research", {
@@ -108,7 +108,7 @@ app.agent("research", {
   ],
 });`;
 
-const mcpServerCode = `// AUTHOR — expose this app's workflows + agents AS an MCP server (P9.2b),
+const mcpServerCode = `// AUTHOR — expose this app's workflows + agents AS an MCP server,
 // so other agents can call them durably.
 await app.start();
 await app.mcpServer({ port: 4200, token: process.env.MCP_TOKEN });
@@ -153,10 +153,10 @@ openaiCompatible({ baseUrl, apiKey })       // OpenAI / Ollama / vLLM /
                                             // OpenRouter — function calling
 
 googleGemini({ apiKey })                    // Gemini generateContent +
-                                            // function calling (P9.7)
+                                            // function calling
 
 bedrock({ region, accessKeyId,             // Anthropic Claude on AWS Bedrock,
-          secretAccessKey })               // SigV4-signed (P9.7)
+          secretAccessKey })               // SigV4-signed
 
 mockProvider([                              // deterministic tests, offline dev
   mockToolUse("search", { q: "x" }, { id: "tu_1" }),
@@ -210,7 +210,7 @@ export default function Page() {
       </P>
       <P>
         If a tool fetches a model- or user-supplied URL, guard it with{" "}
-        <Code>assertPublicUrl(url)</Code> (P7.16) before fetching — it
+        <Code>assertPublicUrl(url)</Code> before fetching — it
         resolve-then-validates the host and rejects private / loopback /
         link-local / cloud-metadata targets (SSRF). The built-in{" "}
         <Code>mcp(url)</Code> takes <Code>ssrf: true</Code> to apply the same
@@ -251,7 +251,7 @@ export default function Page() {
         when the run started.
       </P>
 
-      <H2 id="memory">Tiered memory (P9.3)</H2>
+      <H2 id="memory">Tiered memory</H2>
       <P>
         Session memory is the recent window. <Strong>Tiered memory</Strong> adds
         two more tiers, opt-in via <Code>memory</Code>: <Strong>semantic
@@ -285,7 +285,7 @@ const agent = app.agent("support", { provider, model, memory });`}
       <H2 id="handoff">Multi-agent handoff</H2>
       <CodeBlock code={handoff} filename="handoff.ts" />
 
-      <H2 id="networks">Multi-agent networks (P9.6)</H2>
+      <H2 id="networks">Multi-agent networks</H2>
       <P>
         <Code>handoffTool</Code> is 1:1 delegation. A <Strong>network</Strong>{" "}
         is the 1:N generalization: a <Strong>coordinator</Strong> that routes
@@ -321,7 +321,7 @@ const res = await support.run("I was double-charged and the app crashes");
         forever.
       </P>
 
-      <H2 id="resilience">Circuit breakers (P15.2)</H2>
+      <H2 id="resilience">Circuit breakers</H2>
       <P>
         When an LLM provider (or any external dependency) starts failing,
         retrying just piles load onto a service that is already down. A{" "}
@@ -366,7 +366,7 @@ try {
       <H2 id="output">Structured output</H2>
       <CodeBlock code={output} filename="classifier.ts" />
 
-      <H2 id="evals">Evals (P9.5)</H2>
+      <H2 id="evals">Evals</H2>
       <P>
         Score outputs to gate deploys and regression-test prompts the way you
         unit-test code. Evaluators are pure functions over a sample —{" "}
@@ -405,7 +405,7 @@ if (!report.passed) throw new Error(\`eval gate failed: \${report.passRate * 100
         replays never re-stream.
       </P>
       <P>
-        <Strong>Cost accounting (P9.7):</Strong> every <Code>agent.run()</Code>{" "}
+        <Strong>Cost accounting:</Strong> every <Code>agent.run()</Code>{" "}
         result carries <Code>usage</Code> (token counts) and{" "}
         <Code>costUsd</Code> — an estimate from a built-in per-model price table.
         Prices drift; override with{" "}
@@ -429,7 +429,7 @@ if (!report.passed) throw new Error(\`eval gate failed: \${report.passRate * 100
           { name: "output", type: "StandardSchemaV1", description: "Validate the final answer as JSON (one corrective round)." },
           { name: "stepRetries", type: "number", default: "2", description: "Retries per step (tools, model calls)." },
           { name: "lease", type: "Duration", default: `"5m"`, description: "Crash-redelivery horizon — covers slow model calls." },
-          { name: "circuitBreaker", type: "CircuitBreakerOptions", description: "Fail-fast guard around model calls (P15.2): failureThreshold, resetTimeout, halfOpenMax, maxConcurrent." },
+          { name: "circuitBreaker", type: "CircuitBreakerOptions", description: "Fail-fast guard around model calls: failureThreshold, resetTimeout, halfOpenMax, maxConcurrent." },
         ]}
       />
       <Table

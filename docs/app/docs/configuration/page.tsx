@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 
 import { CodeBlock } from "@/components/code-block";
 import { DocPage } from "@/components/docs/doc-page";
@@ -170,19 +170,19 @@ export default function Page() {
             name: "onError",
             type: "(err, ctx) => void",
             description:
-              "Error sink (P16.4): engine errors the runtime would otherwise only log (native log-callback + background-loop failures). Wire to Sentry via sentryReporter(Sentry).",
+              "Error sink: engine errors the runtime would otherwise only log (native log-callback + background-loop failures). Wire to Sentry via sentryReporter(Sentry).",
           },
           {
             name: "onAudit",
             type: "(entry: AuditEntry) => void",
             description:
-              "Audit sink (P13.6): privileged actions — workflow trigger/cancel, DLQ requeue, agent approve/deny, runs.cancel, subject.purge.",
+              "Audit sink: privileged actions — workflow trigger/cancel, DLQ requeue, agent approve/deny, runs.cancel, subject.purge.",
           },
           {
             name: "alerts",
             type: "{ onAlert; interval?; dlqThreshold?; idle? }",
             description:
-              "Operational alerting (P14.2): background watch for DLQ growth + stuck runs → onAlert. Wire to PagerDuty/Slack.",
+              "Operational alerting: background watch for DLQ growth + stuck runs → onAlert. Wire to PagerDuty/Slack.",
           },
           {
             name: "retention",
@@ -195,13 +195,13 @@ export default function Page() {
             name: "payloads",
             type: "{ threshold?: number; store?: BlobStore }",
             description:
-              "Large-payload offloading (P9.1): step results over `threshold` bytes (default 64 KiB) go to a blob store; the journal keeps a reference. Default store is the filesystem; multi-node needs a shared store (e.g. S3).",
+              "Large-payload offloading: step results over `threshold` bytes (default 64 KiB) go to a blob store; the journal keeps a reference. Default store is the filesystem; multi-node needs a shared store (e.g. S3).",
           },
           {
             name: "encryptionKey",
             type: "string",
             description:
-              "Payload encryption at rest (P7.15): AES-256-GCM on job payloads, run inputs/outputs, step results, and event payloads. Load from an env var or secret manager — never hard-code, never lose it. Transparent to enable on an existing DB (legacy plaintext stays readable).",
+              "Payload encryption at rest: AES-256-GCM on job payloads, run inputs/outputs, step results, and event payloads. Load from an env var or secret manager — never hard-code, never lose it. Transparent to enable on an existing DB (legacy plaintext stays readable).",
           },
         ]}
       />
@@ -333,13 +333,13 @@ export default function Page() {
           <Code>zenzip doctor</Code> reports them too.
         </LI>
         <LI>
-          <Strong>Bulk cancel (P14.1):</Strong>{" "}
+          <Strong>Bulk cancel:</Strong>{" "}
           <Code>app.cancelRuns(&#123; workflow, status, olderThan &#125;)</Code>{" "}
           cancels every matching non-terminal run (and its children) — incident
           response or draining before a breaking deploy.
         </LI>
         <LI>
-          <Strong>Alerting (P14.2):</Strong> set <Code>alerts</Code> and a
+          <Strong>Alerting:</Strong> set <Code>alerts</Code> and a
           background loop watches for dead-letter-queue growth and stuck runs,
           calling <Code>onAlert</Code> — wire it to PagerDuty/Slack/email.
         </LI>
@@ -362,7 +362,7 @@ const { cancelled } = await app.cancelRuns({ workflow: "import", status: "runnin
       <H2 id="hardening">Config hardening</H2>
       <UL>
         <LI>
-          <Strong>Boot-time validation (P13.5):</Strong> <Code>app.start()</Code>{" "}
+          <Strong>Boot-time validation:</Strong> <Code>app.start()</Code>{" "}
           validates options first and throws a clear{" "}
           <Code>zenzip config: …</Code> error on misconfig (e.g. a postgres
           store with no <Code>url</Code>, a negative payload threshold) — fail
@@ -375,7 +375,7 @@ const { cancelled } = await app.cancelRuns({ workflow: "import", status: "runnin
           masks the password for safe logging.
         </LI>
         <LI>
-          <Strong>Audit log (P13.6):</Strong> pass <Code>onAudit</Code> to
+          <Strong>Audit log:</Strong> pass <Code>onAudit</Code> to
           record privileged actions (workflow trigger / cancel, dead-letter
           requeue, agent approve / deny) — each entry is{" "}
           <Code>&#123; action, target, at, detail &#125;</Code>; wire it to an

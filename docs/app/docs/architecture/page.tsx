@@ -48,7 +48,7 @@ const diagram = `┌────────────────────
                        │ Store trait
 ┌──────────────────────▼──────────────────────────────┐
 │  SQLite (WAL) — default, zero config                 │
-│  PostgreSQL — Phase 5, multi-node via SKIP LOCKED    │
+│  PostgreSQL — multi-node via SKIP LOCKED              │
 └──────────────────────────────────────────────────────┘`;
 
 const handlerFlow = `// What actually happens when a job is processed:
@@ -84,7 +84,7 @@ export default function Page() {
       <H2 id="boundary">The NAPI boundary</H2>
       <P>
         Every JS↔Rust crossing has a cost, and we measured it before designing
-        the protocol (<A href="/docs/benchmarks">Phase 0 spike</A>). The rules
+        the protocol (<A href="/docs/benchmarks">benchmarks</A>). The rules
         that fell out of those numbers are hard rules:
       </P>
       <Table
@@ -146,9 +146,9 @@ export default function Page() {
           queue jobs.
         </LI>
         <LI>
-          <Strong>Agents</Strong> (Phase 4) will be workflows whose steps are
-          generated dynamically — every LLM call and tool execution a journaled
-          step, inheriting retry, resume, and human-in-the-loop for free.
+          <Strong>Agents</Strong> are workflows whose steps are generated
+          dynamically — every LLM call and tool execution a journaled step,
+          inheriting retry, resume, and human-in-the-loop for free.
         </LI>
       </UL>
       <Callout type="tip" title="Why this matters">
@@ -172,7 +172,7 @@ export default function Page() {
           needs. Zero configuration: the file lives in <Code>dataDir</Code>.
         </LI>
         <LI>
-          <Strong>PostgreSQL (Phase 5).</Strong> Same trait, claims via{" "}
+          <Strong>PostgreSQL (multi-node).</Strong> Same trait, claims via{" "}
           <Code>FOR UPDATE SKIP LOCKED</Code>, for multi-node deployments. No
           custom consensus — Postgres already solved distributed state.
         </LI>
@@ -202,11 +202,10 @@ export default function Page() {
         <LI>
           <Strong>Multiple processes, one box:</Strong> WAL supports it;
           producers and consumers can be separate processes sharing the data
-          dir. The 4-process contention benchmark is an open task before this
-          is documented as a first-class pattern.
+          dir — a common pattern for producer web servers with dedicated worker processes.
         </LI>
         <LI>
-          <Strong>Multiple machines:</Strong> Phase 5, via Postgres.
+          <Strong>Multiple machines:</Strong> via Postgres — same API, horizontal scale.
         </LI>
       </UL>
 
@@ -218,19 +217,19 @@ export default function Page() {
       <Table
         head={["ID", "Decision", "Status"]}
         rows={[
-          ["D1", "Step memoization, not Temporal-style replay", "shipped (Phase 2)"],
-          ["D2", "SQLite embedded default; Postgres for scale-out", "shipped / Phase 5"],
-          ["D3", "Coarse boundary: sync calls + pipelined TSFN", "shipped, spike-verified"],
-          ["D4", "Agents are workflows with dynamic steps", "Phase 4"],
+          ["D1", "Step memoization, not Temporal-style replay", "shipped"],
+          ["D2", "SQLite embedded default; Postgres for scale-out", "shipped"],
+          ["D3", "Coarse boundary: sync calls + pipelined TSFN", "shipped, benchmark-verified"],
+          ["D4", "Agents are workflows with dynamic steps", "shipped"],
           ["D5", "HTTP stays a Node adapter (Rust server: NO-GO by benchmark)", "settled"],
-          ["D6", "Content-hash workflow versioning, stable step ids", "shipped (Phase 2)"],
+          ["D6", "Content-hash workflow versioning, stable step ids", "shipped"],
           ["D7", "At-least-once delivery; effectively-once step recording", "shipped"],
-          ["D8", "Own tokio runtime; document multi-process model", "shipped / partial"],
+          ["D8", "Own tokio runtime; producer/consumer multi-process model", "shipped"],
         ]}
       />
       <P>
-        Full text with rationale lives in the repository:{" "}
-        <Code>docs/content/plan.md</Code>.
+        Benchmark methodology and raw numbers behind each decision:{" "}
+        <A href="/docs/benchmarks">Benchmarks</A>.
       </P>
     </DocPage>
   );

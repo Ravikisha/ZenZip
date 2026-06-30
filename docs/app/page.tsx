@@ -84,8 +84,8 @@ const replaced = [
   { tool: "Temporal cluster", replacement: "app.workflow()" },
   { tool: "node-cron", replacement: "app.schedule()" },
   { tool: "RabbitMQ", replacement: "app.emit()" },
-  { tool: "LangGraph", replacement: "app.agent() — Phase 4" },
-  { tool: "Grafana setup", replacement: "dashboard — Phase 3" },
+  { tool: "LangGraph", replacement: "app.agent()" },
+  { tool: "Grafana setup", replacement: "app.dashboard()" },
 ];
 
 const features = [
@@ -122,8 +122,8 @@ const features = [
   {
     icon: GitFork,
     title: "Agents are workflows",
-    body: "The Phase 4 agent engine compiles LLM loops to dynamic durable steps: tool failures retry without re-calling the model, approvals are waitForEvent gates.",
-    href: "/docs/roadmap",
+    body: "The agent engine compiles LLM loops to dynamic durable steps: tool failures retry without re-calling the model, approvals are waitForEvent gates.",
+    href: "/docs/agents",
   },
 ];
 
@@ -135,16 +135,16 @@ const stats = [
 ];
 
 const phases = [
-  { name: "Phase 0 — Boundary spike", status: "done" },
-  { name: "Phase 1 — Queues + scheduler", status: "done" },
-  { name: "Phase 2 — Durable workflows", status: "done" },
-  { name: "Phase 3 — Events, machines, dashboard", status: "done" },
-  { name: "Phase 4 — Agent engine", status: "done" },
-  { name: "Phase 5 — Postgres multi-node", status: "done" },
-  { name: "Phase 7 — Production hardening", status: "done" },
-  { name: "Phase 8 — Express-native DX", status: "done" },
-  { name: "Phase 9 — AI depth (MCP, evals)", status: "done" },
-  { name: "Phase 10 — Flow control & scale", status: "done" },
+  { name: "Durable queues & scheduler", status: "done" },
+  { name: "Durable workflow engine", status: "done" },
+  { name: "Events, state machines & dashboard", status: "done" },
+  { name: "AI agent engine", status: "done" },
+  { name: "Postgres multi-node", status: "done" },
+  { name: "Production hardening & security", status: "done" },
+  { name: "Express-compatible HTTP layer", status: "done" },
+  { name: "MCP, evals & tiered memory", status: "done" },
+  { name: "Flow control, fairness & scale", status: "done" },
+  { name: "npm prebuilds & launch packaging", status: "next" },
 ];
 
 export default function Home() {
@@ -221,7 +221,7 @@ export default function Home() {
                   server.&rdquo;
                 </p>
                 <p className="mt-3 text-sm text-ink-dim">
-                  Scale-out later? Point the same API at Postgres (Phase 5).
+                  Scale-out later? Point the same API at Postgres.
                   Nothing else changes.
                 </p>
               </div>
@@ -367,11 +367,11 @@ export default function Home() {
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
                 <h2 className="text-2xl font-bold tracking-tight text-ink">
-                  Built in serial phases, each gated by tests
+                  Every feature is shipped and tested
                 </h2>
                 <p className="mt-3 max-w-xl text-[15px] leading-7 text-ink-mid">
-                  No phase starts until the previous one&apos;s exit criteria
-                  pass — chaos suites included.
+                  230+ tests green across Rust and TypeScript — including
+                  SIGKILL crash-injection and multi-node Postgres chaos suites.
                 </p>
               </div>
               <ButtonLink href="/docs/roadmap" variant="outline">

@@ -84,8 +84,8 @@ export default function Page() {
           ZenZip is pre-publication. Today you build from the monorepo:{" "}
           <code>pnpm install &amp;&amp; pnpm build</code> compiles the Rust
           native module (Rust stable + Node 18+ required) and the TypeScript
-          package. npm prebuilds for all platforms ship with the public alpha
-          (Phase 6).
+          package. npm prebuilds for all platforms ship with the upcoming
+          public alpha release.
         </p>
       </Callout>
       <P>

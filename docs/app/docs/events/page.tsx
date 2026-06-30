@@ -185,9 +185,8 @@ export default function Page() {
         </p>
       </Callout>
       <P>
-        Cross-process event fan-out (multiple machines) arrives with the
-        Postgres backend in <A href="/docs/roadmap">Phase 5</A> via
-        LISTEN/NOTIFY.
+        Cross-process event fan-out (multiple machines) is available with the
+        <A href="/docs/production"> Postgres backend</A> via LISTEN/NOTIFY.
       </P>
     </DocPage>
   );

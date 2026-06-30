@@ -157,7 +157,7 @@ export default function Page() {
 
       <H2 id="scope">Scope &amp; positioning</H2>
       <P>
-        Per the <A href="/docs/benchmarks">Phase 0 verdict</A>, ZenZip does
+        Per the <A href="/docs/benchmarks">benchmark verdict</A>, ZenZip does
         not compete with Fastify/Hono on HTTP performance — this adapter
         exists so small apps need nothing else, and webhook-driven workflows
         get one-line ergonomics. For serious HTTP surface, run your favorite

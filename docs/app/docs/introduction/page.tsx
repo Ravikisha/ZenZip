@@ -100,7 +100,7 @@ export default function Page() {
       <Callout type="info" title="Speed is not the pitch">
         <p>
           The Rust core is fast, but frameworks don&apos;t win on router
-          benchmarks — our own <A href="/docs/benchmarks">Phase 0 measurements</A>{" "}
+          benchmarks — our own <A href="/docs/benchmarks">measurements</A>{" "}
           killed the idea of a Rust HTTP server. The pitch is{" "}
           <strong>deleting infrastructure</strong> and{" "}
           <strong>durability by default</strong>.
@@ -164,7 +164,7 @@ export default function Page() {
           step-memoization journal
         </LI>
         <LI>
-          An <Strong>agent</Strong> (Phase 4) is a workflow whose steps are
+          An <Strong>agent</Strong> is a workflow whose steps are
           generated dynamically by an LLM loop
         </LI>
       </UL>

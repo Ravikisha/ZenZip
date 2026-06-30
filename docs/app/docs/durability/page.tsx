@@ -192,7 +192,7 @@ export default function Page() {
           lease/3 cadence, so long steps don&apos;t need a long lease.
         </LI>
         <LI>
-          <Strong>Clock-skew safety (P7.12):</Strong> on Postgres, lease
+          <Strong>Clock-skew safety:</Strong> on Postgres, lease
           set/renew/expiry use the <Strong>database</Strong> server clock, not
           per-node wall clocks — so a node whose clock drifts can&apos;t
           prematurely expire another node&apos;s lease. One authority, no skew.
@@ -228,7 +228,7 @@ export default function Page() {
         ]}
       />
       <P>
-        <Strong>Version routing (P10.6):</Strong> for a structural change, keep
+        <Strong>Version routing:</Strong> for a structural change, keep
         the old function and register it with{" "}
         <Code>wf.version(oldFn)</Code> — in-flight runs pinned to the old
         content hash keep executing the old logic, while new runs use the
@@ -243,7 +243,7 @@ export default function Page() {
         </p>
       </Callout>
 
-      <H2 id="encryption">Encryption at rest (P7.15)</H2>
+      <H2 id="encryption">Encryption at rest</H2>
       <P>
         A durable engine persists every input and output, so for teams handling
         PII that data sits in the store indefinitely. Set an{" "}
@@ -311,9 +311,9 @@ export default function Page() {
       <P>
         See the test files: <Code>packages/zenzip/test/workflow.test.ts</Code>,{" "}
         <Code>test/chaos.test.ts</Code>, and{" "}
-        <Code>crates/zenzip-core/tests/workflow_test.rs</Code>. Next up on this
-        front is the full 1k-run kill-at-every-step-boundary suite —{" "}
-        <A href="/docs/roadmap">tracked as P2.14</A>.
+        <Code>crates/zenzip-core/tests/workflow_test.rs</Code>. A comprehensive
+        kill-at-every-step-boundary suite is tracked on the{" "}
+        <A href="/docs/roadmap">roadmap</A>.
       </P>
     </DocPage>
   );

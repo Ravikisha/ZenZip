@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 
 import { CodeBlock } from "@/components/code-block";
 import { DocPage } from "@/components/docs/doc-page";
@@ -94,7 +94,7 @@ export default function Page() {
         ]}
       />
 
-      <H2 id="secrets">Secrets &amp; config (P13.5)</H2>
+      <H2 id="secrets">Secrets &amp; config</H2>
       <UL>
         <LI>
           Resolve secrets with <Code>resolveSecret(&quot;env:NAME&quot;)</Code>{" "}
@@ -114,13 +114,13 @@ export default function Page() {
       <H2 id="encryption">Encryption &amp; retention</H2>
       <UL>
         <LI>
-          <Strong>Encrypt at rest (P7.15):</Strong> set <Code>encryptionKey</Code>{" "}
+          <Strong>Encrypt at rest:</Strong> set <Code>encryptionKey</Code>{" "}
           and job payloads, run inputs/outputs, step results, and event payloads
           are AES-256-GCM encrypted in the store. Transparent to enable on an
           existing DB.
         </LI>
         <LI>
-          <Strong>Retention (P7.6):</Strong> a background sweep deletes aged
+          <Strong>Retention:</Strong> a background sweep deletes aged
           terminal runs and old events so the store never grows unbounded — set{" "}
           <Code>retention</Code> windows. On Postgres the event outbox is
           range-partitioned, so GC reclaims space by dropping partitions.
@@ -133,7 +133,7 @@ export default function Page() {
         (readiness — store reachable, 503 until ready) are auto-registered. Gate
         load balancers and rolling deploys on <Code>/readyz</Code>. On{" "}
         <Code>SIGTERM</Code>, <Code>app.stop()</Code> drains in-flight HTTP and
-        jobs (P15.3):
+        jobs:
       </P>
       <CodeBlock code={drain} filename="shutdown.ts" />
 
@@ -141,18 +141,18 @@ export default function Page() {
       <Table
         head={["Concern", "Built-in"]}
         rows={[
-          [<Strong key="1">AuthN</Strong>, "zenzip.auth() — Bearer / API key, or a verify() JWT/OIDC seam (P13.1)"],
-          [<Strong key="2">Validation</Strong>, "zenzip.validate() — Standard Schema body/query → auto-400 (P13.2)"],
-          [<Strong key="3">Headers</Strong>, "zenzip.secureHeaders() — nosniff, frame-options, HSTS, opt-in CSP (P13.3)"],
-          [<Strong key="4">CSRF</Strong>, "zenzip.csrf() — origin/referer guard for state-changing methods (P13.3)"],
-          [<Strong key="5">Rate limit</Strong>, "zenzip.rateLimit() — per-IP/key fixed window → 429 (P13.4)"],
-          [<Strong key="6">SSRF</Strong>, "assertPublicUrl() on user-controlled fetches (P7.16)"],
-          [<Strong key="7">Dashboard RBAC</Strong>, "operator vs read-only tokens (P7.17)"],
-          [<Strong key="8">Audit</Strong>, "onAudit — privileged actions (trigger/cancel/requeue/approve/purge) (P13.6)"],
+          [<Strong key="1">AuthN</Strong>, "zenzip.auth() — Bearer / API key, or a verify() JWT/OIDC seam"],
+          [<Strong key="2">Validation</Strong>, "zenzip.validate() — Standard Schema body/query → auto-400"],
+          [<Strong key="3">Headers</Strong>, "zenzip.secureHeaders() — nosniff, frame-options, HSTS, opt-in CSP"],
+          [<Strong key="4">CSRF</Strong>, "zenzip.csrf() — origin/referer guard for state-changing methods"],
+          [<Strong key="5">Rate limit</Strong>, "zenzip.rateLimit() — per-IP/key fixed window → 429"],
+          [<Strong key="6">SSRF</Strong>, "assertPublicUrl() on user-controlled fetches"],
+          [<Strong key="7">Dashboard RBAC</Strong>, "operator vs read-only tokens"],
+          [<Strong key="8">Audit</Strong>, "onAudit — privileged actions (trigger/cancel/requeue/approve/purge)"],
         ]}
       />
 
-      <H2 id="observability">Logs, errors, alerts (P16.4)</H2>
+      <H2 id="observability">Logs, errors, alerts</H2>
       <UL>
         <LI>
           <Strong>Logs:</Strong> pipe engine logs into your stack with{" "}
@@ -164,7 +164,7 @@ export default function Page() {
           <Code>captureErrors(reporter)</Code> as error middleware for HTTP.
         </LI>
         <LI>
-          <Strong>Alerts (P14.2):</Strong> <Code>alerts</Code> fires{" "}
+          <Strong>Alerts:</Strong> <Code>alerts</Code> fires{" "}
           <Code>onAlert</Code> on dead-letter-queue growth and stuck runs — wire
           it to PagerDuty/Slack. Inspect stalls with{" "}
           <Code>app.orphanedRuns()</Code>.
@@ -174,7 +174,7 @@ export default function Page() {
       <H2 id="tenancy">Multi-tenancy &amp; PII</H2>
       <UL>
         <LI>
-          <Strong>Namespaces (P14.5):</Strong>{" "}
+          <Strong>Namespaces:</Strong>{" "}
           <Code>const t = app.namespace(tenantId)</Code> scopes every queue,
           workflow, schedule, agent, and event with a <Code>tenantId:</Code>{" "}
           prefix — one tenant&apos;s events never wake another&apos;s triggers.
@@ -182,7 +182,7 @@ export default function Page() {
           tenant its own database.)
         </LI>
         <LI>
-          <Strong>PII erasure (P14.6):</Strong> tag runs with a{" "}
+          <Strong>PII erasure:</Strong> tag runs with a{" "}
           <Code>subject</Code> and erase on request.
         </LI>
       </UL>
@@ -194,7 +194,7 @@ export default function Page() {
         <Code>SKIP LOCKED</Code>, cross-node wakeups ride{" "}
         <Code>LISTEN/NOTIFY</Code>, and the scheduler elects a leader via an
         advisory lock. Bound the pool and statement timeouts are pre-set for
-        fail-fast recovery (P15.4). Use a separate read replica for the
+        fail-fast recovery. Use a separate read replica for the
         dashboard if needed. Validated by a 3-node kill-a-node chaos test.
       </P>
 

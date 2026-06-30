@@ -210,7 +210,7 @@ without re-calling the model for completed steps.
 
 Same-machine numbers (i5-1135G7, Node 22) — **relative signals, not marketing
 claims**. Reproduce with `pnpm bench:*`. Full methodology + caveats:
-[`docs/content/spike-results.md`](docs/content/spike-results.md).
+[Benchmarks](docs/app/docs/benchmarks/page.tsx).
 
 **HTTP throughput — identical handlers, ZenZip vs Express 5 vs Fastify** (req/s, best-of):
 
@@ -227,7 +227,7 @@ though HTTP is a thin `node:http` adapter, not the product. You adopt ZenZip for
 the durable engine; the adapter being this fast means migrating costs you
 nothing on the request path. `pnpm bench:compare`.
 
-**The engine, measured (Phase 0 — these numbers shaped the design):**
+**The engine, measured (these numbers shaped the design):**
 
 | What | Result |
 |---|---|
@@ -257,7 +257,7 @@ CI doesn't just unit-test — it **kills things**:
 - with `encryptionKey` set → the secret payload appears in **no** on-disk file.
 
 Delivery semantics, versioning rules, and the idempotency guide:
-[`docs/content/workflow-semantics.md`](docs/content/workflow-semantics.md).
+[Durability & Semantics](docs/app/docs/durability/page.tsx).
 
 ## Architecture
 
@@ -284,8 +284,8 @@ Delivery semantics, versioning rules, and the idempotency guide:
   zero config                   advisory-lock election, range partitioning
 ```
 
-Design decisions (D1–D8) with the measurements behind them:
-[`docs/content/plan.md`](docs/content/plan.md).
+Design decisions and architecture:
+[Architecture](docs/app/docs/architecture/page.tsx).
 
 ## Documentation
 
@@ -314,7 +314,7 @@ and the reference `Dockerfile` + Kubernetes/Helm manifests in [`deploy/`](deploy
 | 10 | Flow control & scale (per-key concurrency, fairness, debounce, throttle, PG partitioning, radix router, benchmarks) | ✅ |
 | 6 / 11+ | Launch packaging, modular split, realtime/WebSocket layer | 🔜 |
 
-Full task ledger: [`docs/content/tasks.md`](docs/content/tasks.md).
+Full roadmap: [docs/app/docs/roadmap/page.tsx](docs/app/docs/roadmap/page.tsx).
 
 ## Repository layout
 
@@ -325,7 +325,7 @@ packages/core-native/   napi-rs bridge crate + npm package (@zenzip/core-native)
 packages/zenzip/        Public TypeScript API (npm: zenzip)
 bench/                  Reproducible benchmarks (boundary, sqlite, http, compare)
 examples/               email-queue · demo-dashboard · support-agent
-docs/                   Documentation site (Next.js); guides in docs/content/
+docs/                   Documentation site (Next.js)
 ```
 
 ## Development

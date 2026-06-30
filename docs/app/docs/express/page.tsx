@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+﻿import type { Metadata } from "next";
 
 import { CodeBlock } from "@/components/code-block";
 import { DocPage } from "@/components/docs/doc-page";
@@ -94,7 +94,7 @@ app.use(zenzip.logger({ log: (line) => myLogger.info(line) }));
 app.use(zenzip.static("public"));          // serve files from ./public
 app.use(zenzip.static("public", { prefix: "/assets" }));
 
-// Auth guard (P13.1) + request validation (P13.2) — path-scoped:
+// Auth guard + request validation — path-scoped:
 app.use("/admin", zenzip.auth({ tokens: [process.env.API_KEY!] }));
 app.use("/admin", zenzip.auth({ verify: (t) => verifyJwt(t) })); // JWT/OIDC seam
 app.use("/users", zenzip.validate({ body: userSchema }));         // → req.user, auto-400`;
@@ -169,7 +169,7 @@ export default function Page() {
         </p>
       </Callout>
       <P>
-        <Strong>Typed error envelope (P16.5).</Strong> An unhandled throw
+        <Strong>Typed error envelope.</Strong> An unhandled throw
         becomes <Code>{`{ error, code, status }`}</Code> with a mapped HTTP
         status. Throw <Code>HttpError</Code> for an explicit status/code; known
         framework errors map automatically — saturation
@@ -211,11 +211,11 @@ app.get("/orders/:id", (ctx) => {
           [<Code key="3">zenzip.cors(opts)</Code>, "CORS headers + automatic OPTIONS preflight (origin string | string[] | true)"],
           [<Code key="4">zenzip.logger(opts)</Code>, "METHOD /path STATUS DURms on response finish; pluggable sink"],
           [<Code key="5">zenzip.static(root, opts)</Code>, "serve files from a directory; traversal-safe, falls through to routes; index + prefix options"],
-          [<Code key="6">zenzip.auth(opts)</Code>, "auth guard (P13.1): Bearer/x-api-key against static tokens or a verify() callback (JWT/OIDC seam); attaches req.user, 401s otherwise"],
-          [<Code key="7">zenzip.validate(opts)</Code>, "request validation (P13.2): body/query Standard Schema → auto-400 with issues, replaces with parsed value"],
-          [<Code key="8">zenzip.secureHeaders(opts)</Code>, "security headers (P13.3): nosniff, X-Frame-Options, Referrer-Policy, HSTS; opt-in CSP (helmet-equivalent)"],
-          [<Code key="9">zenzip.rateLimit(opts)</Code>, "HTTP rate limit (P13.4): fixed-window per key (default client IP) → 429 + X-RateLimit-* headers"],
-          [<Code key="10">zenzip.csrf(opts)</Code>, "CSRF protection (P13.3): origin/referer check on state-changing methods (pairs with SameSite cookies); allowedOrigins or same-origin → 403 otherwise"],
+          [<Code key="6">zenzip.auth(opts)</Code>, "auth guard: Bearer/x-api-key against static tokens or a verify() callback (JWT/OIDC seam); attaches req.user, 401s otherwise"],
+          [<Code key="7">zenzip.validate(opts)</Code>, "request validation: body/query Standard Schema → auto-400 with issues, replaces with parsed value"],
+          [<Code key="8">zenzip.secureHeaders(opts)</Code>, "security headers: nosniff, X-Frame-Options, Referrer-Policy, HSTS; opt-in CSP (helmet-equivalent)"],
+          [<Code key="9">zenzip.rateLimit(opts)</Code>, "HTTP rate limit: fixed-window per key (default client IP) → 429 + X-RateLimit-* headers"],
+          [<Code key="10">zenzip.csrf(opts)</Code>, "CSRF protection: origin/referer check on state-changing methods (pairs with SameSite cookies); allowedOrigins or same-origin → 403 otherwise"],
         ]}
       />
 
@@ -284,7 +284,7 @@ app.get("/orders/:id", (ctx) => {
       <P>
         The Express layer is pure DX sugar over the <A href="/docs/http-dashboard">node:http adapter</A> — it never
         leaks into the engine or changes durability semantics. HTTP stays a Node
-        adapter; per the <A href="/docs/benchmarks">Phase 0 verdict</A>, ZenZip
+        adapter; per the <A href="/docs/benchmarks">benchmark verdict</A>, ZenZip
         does not compete with Fastify/Hono on raw HTTP throughput. The point is
         that a small app needs nothing else, and a developer who knows Express
         is productive in minutes. First-class Fastify / Hono / Next.js adapters
