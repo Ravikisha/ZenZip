@@ -7,3 +7,13 @@ dist/
 *.db-wal
 .DS_Store
 npm-debug.log*
+
+# internal dev docs
+docs-files/
+designs/
+docs/AGENTS.md
+docs/CLAUDE.md
+docs/content/plan.md
+docs/content/spike-results.md
+docs/content/tasks.md
+docs/content/workflow-semantics.md

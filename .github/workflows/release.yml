@@ -35,13 +35,14 @@ jobs:
           - host: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
           # musl — the top install-failure mode on Alpine / distroless Docker (P7.19).
-          # Cross-compiled with zig so one runner produces both musl targets.
+          # Cross-compiled via napi-rs's bundled toolchain (--use-napi-cross),
+          # so one x86_64 runner produces both musl targets without Docker.
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            zig: true
+            cross: true
           - host: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            zig: true
+            cross: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -55,17 +56,12 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: Install zig (musl cross-compile)
-        if: ${{ matrix.settings.zig }}
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.13.0
       - run: pnpm install --frozen-lockfile
       - name: Build native module
         run: >-
           pnpm --filter @zenzip/core-native exec napi build --platform --release
           --target ${{ matrix.settings.target }}
-          ${{ matrix.settings.zig && '--zig' || '' }}
+          ${{ matrix.settings.cross && '--use-napi-cross' || '' }}
       - uses: actions/upload-artifact@v4
         with:
           name: binding-${{ matrix.settings.target }}
