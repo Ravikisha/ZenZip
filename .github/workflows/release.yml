@@ -1,10 +1,10 @@
-# Release pipeline (P6.5/P6.6, P7.18/P7.19): build napi prebuilds for the full
-# platform matrix — incl. musl (Alpine/Docker) — generate an SBOM, and publish
-# to npm with build provenance (SLSA-aligned). Trigger: pushing a v* tag.
+# Release pipeline: build napi prebuilds for the full platform matrix — incl.
+# musl (Alpine/Docker) — generate an SBOM, and publish to npm with build
+# provenance (SLSA-aligned). Trigger: pushing a v* tag.
 #
-# Needs: NPM_TOKEN secret. Provenance needs `id-token: write` + npm/pnpm running
-# under GitHub OIDC (automatic on GitHub-hosted runners). First run will need
-# babysitting — prebuild publishing always does.
+# Needs: NPM_TOKEN secret in the "Zenzip" environment. Provenance needs
+# `id-token: write` + npm/pnpm running under GitHub OIDC (automatic on
+# GitHub-hosted runners).
 name: Release
 
 on:
@@ -34,16 +34,14 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - host: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          # musl — cross-compiled with zig so libsqlite3-sys (embedded C) can
-          # find a compiler. CC_* env vars wire cc-rs to zig cc.
+          # musl — cross-compiled via cargo-zigbuild so libsqlite3-sys (embedded C)
+          # finds a compiler and zig target triples are translated correctly.
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
             cross: true
-            cc: "zig cc -target x86_64-linux-musl"
           - host: ubuntu-latest
             target: aarch64-unknown-linux-musl
             cross: true
-            cc: "zig cc -target aarch64-linux-musl"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -52,25 +50,24 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.settings.target }}
-      - name: Install zig (musl cross-compile)
-        if: ${{ matrix.settings.cross }}
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.13.0
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Install cargo-zigbuild (musl cross-compile)
+        if: ${{ matrix.settings.cross }}
+        run: |
+          pip3 install ziglang
+          cargo install cargo-zigbuild --locked
       - name: Build native module
         run: >-
           pnpm --filter @zenzip/core-native exec napi build --platform --release
           --target ${{ matrix.settings.target }}
           ${{ matrix.settings.cross && '--use-napi-cross' || '' }}
         env:
-          CC_x86_64_unknown_linux_musl: ${{ matrix.settings.cc || '' }}
-          CC_aarch64_unknown_linux_musl: ${{ matrix.settings.cc || '' }}
+          CARGO: ${{ matrix.settings.cross && 'cargo-zigbuild' || 'cargo' }}
       - uses: actions/upload-artifact@v4
         with:
           name: binding-${{ matrix.settings.target }}
@@ -98,7 +95,7 @@ jobs:
         run: pnpm --filter @zenzip/core-native exec napi artifacts --dir ../../artifacts
       - name: Build TypeScript package
         run: pnpm --filter zenzip build
-      # Software Bill of Materials (P7.18): CycloneDX SBOM attached to the release.
+      # Software Bill of Materials: CycloneDX SBOM attached to the release.
       - name: Generate SBOM (CycloneDX)
         run: npx -y @cyclonedx/cyclonedx-npm --output-file sbom.json || true
       - uses: actions/upload-artifact@v4
