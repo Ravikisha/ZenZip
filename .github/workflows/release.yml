@@ -55,21 +55,26 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - name: Install cargo-zigbuild (musl cross-compile)
+      # musl cross-compile toolchain (napi-rs v3 dropped --zig; the flag is now
+      # -x / --cross-compile, which drives cargo-zigbuild — wiring BOTH the Rust
+      # linker and the C compiler (libsqlite3-sys) to zig. napi's -x needs a real
+      # `zig` binary on PATH, so install it (verified locally against musl).
+      - name: Set up zig
         if: ${{ matrix.settings.cross }}
-        run: |
-          pip3 install ziglang
-          cargo install cargo-zigbuild --locked
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+      - name: Install cargo-zigbuild
+        if: ${{ matrix.settings.cross }}
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+      - run: pnpm install --frozen-lockfile
       - name: Build native module
-        # napi's --zig flag drives cargo-zigbuild, which wires BOTH the Rust
-        # linker and the C compiler (libsqlite3-sys) to zig and translates the
-        # Rust triple to zig's format. Plain `cargo`/`--use-napi-cross` instead
-        # look for an aarch64-linux-musl-gcc toolchain that isn't installed.
         run: >-
           pnpm --filter @zenzip/core-native exec napi build --platform --release
           --target ${{ matrix.settings.target }}
-          ${{ matrix.settings.cross && '--zig' || '' }}
+          ${{ matrix.settings.cross && '-x' || '' }}
       - uses: actions/upload-artifact@v4
         with:
           name: binding-${{ matrix.settings.target }}
