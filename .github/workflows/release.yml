@@ -99,7 +99,11 @@ jobs:
         with:
           path: artifacts
       - name: Create platform packages from prebuilds
-        run: pnpm --filter @zenzip/core-native exec napi artifacts --dir ../../artifacts
+        # napi v3: `--dir` → `--output-dir`; the npm/<target> package dirs must
+        # exist first (create-npm-dirs), then artifacts copies each .node in.
+        run: |
+          pnpm --filter @zenzip/core-native exec napi create-npm-dirs
+          pnpm --filter @zenzip/core-native exec napi artifacts --output-dir ../../artifacts
       - name: Build TypeScript package
         run: pnpm --filter zenzip build
       # Software Bill of Materials: CycloneDX SBOM attached to the release.
