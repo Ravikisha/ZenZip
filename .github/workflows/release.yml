@@ -124,6 +124,9 @@ jobs:
         run: pnpm --filter @zenzip/core-native exec napi prepublish -t npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # napi prepublish creates a GitHub release (--gh-release defaults true);
+          # octokit reads GITHUB_TOKEN. Without it → 401 Requires authentication.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
       - name: Publish @zenzip/core-native main package
         run: pnpm --filter @zenzip/core-native publish --no-git-checks --access public --provenance
