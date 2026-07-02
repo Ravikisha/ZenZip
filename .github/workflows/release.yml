@@ -118,15 +118,13 @@ jobs:
       # the npm registry (visible on the package page). Requires id-token: write.
       # napi prepublish publishes the per-platform packages + rewrites the main
       # package.json's optionalDependencies. It does NOT publish the main
-      # package — that's the next step. (v3: gh-release is opt-in; the old
-      # --skip-gh-release flag was removed.)
+      # package — that's the next step. --no-gh-release: skip creating a GitHub
+      # release object (nothing downstream consumes it, and it was 401'ing
+      # regardless of GITHUB_TOKEN wiring).
       - name: Publish @zenzip/core-native platform packages
-        run: pnpm --filter @zenzip/core-native exec napi prepublish -t npm
+        run: pnpm --filter @zenzip/core-native exec napi prepublish -t npm --no-gh-release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          # napi prepublish creates a GitHub release (--gh-release defaults true);
-          # octokit reads GITHUB_TOKEN. Without it → 401 Requires authentication.
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
       - name: Publish @zenzip/core-native main package
         run: pnpm --filter @zenzip/core-native publish --no-git-checks --access public --provenance

@@ -1,6 +1,6 @@
 {
   "name": "create-zenzip-app",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Scaffold a ZenZip app: durable workflows, queues, schedules, and agents with zero infrastructure.",
   "keywords": ["zenzip", "create-app", "scaffold", "starter", "durable-workflows"],
   "license": "MIT",
