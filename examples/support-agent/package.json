@@ -1,5 +1,5 @@
 {
-  "name": "@zenzip/example-support-agent",
+  "name": "@zenzipjs/example-support-agent",
   "version": "0.0.0",
   "private": true,
   "type": "module",

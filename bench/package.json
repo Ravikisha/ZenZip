@@ -1,10 +1,10 @@
 {
-  "name": "@zenzip/bench",
+  "name": "@zenzipjs/bench",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "dependencies": {
-    "@zenzip/core-native": "workspace:*",
+    "@zenzipjs/core-native": "workspace:*",
     "autocannon": "^8.0.0",
     "express": "^5.2.1",
     "fastify": "^5.0.0",

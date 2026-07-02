@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import express from "express";
 import Fastify from "fastify";
-import native from "@zenzip/core-native";
+import native from "@zenzipjs/core-native";
 
 const execFileAsync = promisify(execFile);
 const shooter = join(dirname(fileURLToPath(import.meta.url)), "http-shoot.mjs");

@@ -1,7 +1,7 @@
 // ZenZip example: durable email queue + recurring digest schedule.
 // Zero infrastructure — state lives in ./.zenzip-data/zenzip.db (SQLite WAL).
 //
-// Run: pnpm --filter @zenzip/example-email-queue start
+// Run: pnpm --filter @zenzipjs/example-email-queue start
 // Kill it mid-run and start again: pending/in-flight jobs survive.
 import { zenzip } from "zenzip";
 

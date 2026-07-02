@@ -2,7 +2,7 @@
 // visible live in the dashboard. Kill the process at any point and restart —
 // runs resume, jobs redeliver, schedules continue.
 //
-//   pnpm --filter @zenzip/example-demo-dashboard start
+//   pnpm --filter @zenzipjs/example-demo-dashboard start
 //   → dashboard at http://127.0.0.1:4100  (SSE live)
 //
 // Demo flow for recording: open the dashboard, watch orders march through

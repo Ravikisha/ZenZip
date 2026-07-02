@@ -1,7 +1,7 @@
 import type { Server } from "node:http";
 import { join } from "node:path";
 
-import { ZenRuntime, type JsExecRequest, type JsJob } from "@zenzip/core-native";
+import { ZenRuntime, type JsExecRequest, type JsJob } from "@zenzipjs/core-native";
 
 import { startDashboard, type DashboardOptions } from "./dashboard.js";
 import { ms, type Duration } from "./duration.js";

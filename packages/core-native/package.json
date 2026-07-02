@@ -1,5 +1,5 @@
 {
-  "name": "@zenzip/core-native",
+  "name": "@zenzipjs/core-native",
   "version": "0.1.2",
   "description": "Rust engine (napi-rs) for ZenZip — not used directly; install `zenzip`.",
   "license": "MIT",

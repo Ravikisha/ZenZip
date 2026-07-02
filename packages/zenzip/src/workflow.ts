@@ -1,4 +1,4 @@
-import type { JsExecRequest } from "@zenzip/core-native";
+import type { JsExecRequest } from "@zenzipjs/core-native";
 
 import { ms, type Duration } from "./duration.js";
 import type { ZenzipApp } from "./app.js";

@@ -1,7 +1,7 @@
 // P0.5 — Rust -> JS ThreadsafeFunction dispatch throughput.
 // Models "Rust engine invokes JS step handler, awaits result".
 // Run: pnpm bench:tsfn
-import native from "@zenzip/core-native";
+import native from "@zenzipjs/core-native";
 
 const { benchTsfnRoundtrip, benchTsfnConcurrent } = native;
 

@@ -4,8 +4,8 @@
   "scripts": {
     "build": "pnpm build:native && pnpm --filter zenzip build",
     "test": "cargo test --workspace && pnpm --filter zenzip test",
-    "build:native": "pnpm --filter @zenzip/core-native build",
-    "build:native:debug": "pnpm --filter @zenzip/core-native build:debug",
+    "build:native": "pnpm --filter @zenzipjs/core-native build",
+    "build:native:debug": "pnpm --filter @zenzipjs/core-native build:debug",
     "bench:boundary": "node bench/boundary.mjs",
     "bench:tsfn": "node bench/tsfn.mjs",
     "bench:sqlite": "node bench/sqlite.mjs",

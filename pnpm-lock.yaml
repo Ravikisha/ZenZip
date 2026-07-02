@@ -14,7 +14,7 @@ importers:
 
   bench:
     dependencies:
-      '@zenzip/core-native':
+      '@zenzipjs/core-native':
         specifier: workspace:*
         version: link:../packages/core-native
       autocannon:
@@ -58,7 +58,7 @@ importers:
 
   packages/zenzip:
     dependencies:
-      '@zenzip/core-native':
+      '@zenzipjs/core-native':
         specifier: workspace:*
         version: link:../core-native
     devDependencies:

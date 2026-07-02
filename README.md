@@ -321,7 +321,7 @@ Full roadmap: [docs/app/docs/roadmap/page.tsx](docs/app/docs/roadmap/page.tsx).
 ```text
 crates/zenzip-core/     Rust engine: store trait, SQLite + Postgres impls,
                         queue/scheduler/workflow engines, event outbox, crypto
-packages/core-native/   napi-rs bridge crate + npm package (@zenzip/core-native)
+packages/core-native/   napi-rs bridge crate + npm package (@zenzipjs/core-native)
 packages/zenzip/        Public TypeScript API (npm: zenzip)
 bench/                  Reproducible benchmarks (boundary, sqlite, http, compare)
 examples/               email-queue · demo-dashboard · support-agent
@@ -345,8 +345,8 @@ pnpm bench:boundary     # JS↔Rust call costs
 pnpm bench:sqlite       # store throughput
 pnpm bench:http         # the benchmark that killed our Rust HTTP server
 
-pnpm --filter @zenzip/example-demo-dashboard start   # live dashboard demo
-pnpm --filter @zenzip/example-support-agent start    # agent demo (offline mock;
+pnpm --filter @zenzipjs/example-demo-dashboard start   # live dashboard demo
+pnpm --filter @zenzipjs/example-support-agent start    # agent demo (offline mock;
                                                      # set ANTHROPIC_API_KEY for Claude)
 ```
 

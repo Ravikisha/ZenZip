@@ -3,7 +3,7 @@
 //
 // Runs OFFLINE by default (scripted mock provider). Set ANTHROPIC_API_KEY
 // to use Claude for real:
-//   pnpm --filter @zenzip/example-support-agent start
+//   pnpm --filter @zenzipjs/example-support-agent start
 import {
   anthropic,
   mockProvider,

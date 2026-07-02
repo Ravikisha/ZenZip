@@ -31,9 +31,9 @@ async function doctor(dataDirArg?: string): Promise<void> {
   if (major >= 18) ok(`node ${process.versions.node}`);
   else bad(`node ${process.versions.node} — zenzip needs >= 18`);
 
-  let native: typeof import("@zenzip/core-native");
+  let native: typeof import("@zenzipjs/core-native");
   try {
-    native = await import("@zenzip/core-native");
+    native = await import("@zenzipjs/core-native");
     ok("native binding loads");
   } catch (e) {
     bad(`native binding failed to load: ${e instanceof Error ? e.message : e}`);

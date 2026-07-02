@@ -59,7 +59,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@zenzip/core-native": "workspace:*"
+    "@zenzipjs/core-native": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.19.19",

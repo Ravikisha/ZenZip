@@ -3,7 +3,7 @@
 Release flow (P6.6):
 
 1. Every user-facing PR adds a changeset: `pnpm changeset` (pick packages +
-   semver bump + summary). `zenzip` and `@zenzip/core-native` are version-fixed
+   semver bump + summary). `zenzip` and `@zenzipjs/core-native` are version-fixed
    — they always release together (the TS API is pinned to its native binary).
 2. Merging to main accumulates changesets.
 3. To release: `pnpm changeset version` (bumps + writes CHANGELOGs), commit,

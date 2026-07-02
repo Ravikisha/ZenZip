@@ -1,7 +1,7 @@
 // P0.4 — JS -> Rust boundary round-trip cost.
 // Run: pnpm bench:boundary
 import { bench, group, run } from "mitata";
-import native from "@zenzip/core-native";
+import native from "@zenzipjs/core-native";
 
 const {
   syncNoop,

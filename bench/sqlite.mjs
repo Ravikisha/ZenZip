@@ -4,7 +4,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import native from "@zenzip/core-native";
+import native from "@zenzipjs/core-native";
 
 const { benchSqliteQueue } = native;
 
