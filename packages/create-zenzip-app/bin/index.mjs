@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// create-zenzip-app (P6.1): scaffold a working ZenZip project in seconds.
-//   npx create-zenzip-app my-app
-//   npx create-zenzip-app my-app --template agent
+// create-zenzipjs-app (P6.1): scaffold a working ZenZip project in seconds.
+//   npx create-zenzipjs-app my-app
+//   npx create-zenzipjs-app my-app --template agent
 import {
   cpSync,
   existsSync,
@@ -23,10 +23,10 @@ const template = args.includes("--template")
 
 if (!name || args.includes("--help") || args.includes("-h")) {
   console.log(`
-  create-zenzip-app — scaffold a ZenZip project
+  create-zenzipjs-app — scaffold a ZenZip project
 
   Usage:
-    npx create-zenzip-app <name> [--template ${TEMPLATES.join("|")}]
+    npx create-zenzipjs-app <name> [--template ${TEMPLATES.join("|")}]
 
   Templates:
     basic         queue + cron schedule + durable workflow + dashboard

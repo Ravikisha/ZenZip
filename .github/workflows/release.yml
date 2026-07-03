@@ -105,7 +105,7 @@ jobs:
           pnpm --filter @zenzipjs/core-native exec napi create-npm-dirs
           pnpm --filter @zenzipjs/core-native exec napi artifacts --output-dir ../../artifacts
       - name: Build TypeScript package
-        run: pnpm --filter zenzip build
+        run: pnpm --filter zenzipjs build
       # Software Bill of Materials: CycloneDX SBOM attached to the release.
       - name: Generate SBOM (CycloneDX)
         run: npx -y @cyclonedx/cyclonedx-npm --output-file sbom.json || true
@@ -130,11 +130,11 @@ jobs:
         run: pnpm --filter @zenzipjs/core-native publish --no-git-checks --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Publish zenzip
-        run: pnpm --filter zenzip publish --no-git-checks --access public --provenance
+      - name: Publish zenzipjs
+        run: pnpm --filter zenzipjs publish --no-git-checks --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Publish create-zenzip-app
-        run: pnpm --filter create-zenzip-app publish --no-git-checks --access public --provenance
+      - name: Publish create-zenzipjs-app
+        run: pnpm --filter create-zenzipjs-app publish --no-git-checks --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

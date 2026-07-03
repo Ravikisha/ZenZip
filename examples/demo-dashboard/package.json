@@ -1,12 +1,12 @@
 {
   "name": "@zenzipjs/example-demo-dashboard",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node index.mjs"
   },
   "dependencies": {
-    "zenzip": "workspace:*"
+    "zenzipjs": "workspace:*"
   }
 }

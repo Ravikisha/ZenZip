@@ -8,6 +8,6 @@
     "start": "node src/app.mjs"
   },
   "dependencies": {
-    "zenzip": "latest"
+    "zenzipjs": "latest"
   }
 }

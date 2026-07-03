@@ -8,7 +8,7 @@
 // Demo flow for recording: open the dashboard, watch orders march through
 // charge → cooloff → approval → ship, then kill -9 the process mid-run,
 // restart it, and watch the same runs pick up exactly where they were.
-import { zenzip } from "zenzip";
+import { zenzip } from "zenzipjs";
 
 const app = zenzip({ dataDir: ".zenzip-demo", logLevel: "info" });
 

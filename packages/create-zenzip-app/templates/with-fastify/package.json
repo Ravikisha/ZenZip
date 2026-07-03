@@ -9,6 +9,6 @@
   },
   "dependencies": {
     "fastify": "^5.0.0",
-    "zenzip": "latest"
+    "zenzipjs": "latest"
   }
 }

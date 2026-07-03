@@ -32,19 +32,19 @@ importers:
 
   examples/demo-dashboard:
     dependencies:
-      zenzip:
+      zenzipjs:
         specifier: workspace:*
         version: link:../../packages/zenzip
 
   examples/email-queue:
     dependencies:
-      zenzip:
+      zenzipjs:
         specifier: workspace:*
         version: link:../../packages/zenzip
 
   examples/support-agent:
     dependencies:
-      zenzip:
+      zenzipjs:
         specifier: workspace:*
         version: link:../../packages/zenzip
 

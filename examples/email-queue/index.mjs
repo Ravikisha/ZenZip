@@ -3,7 +3,7 @@
 //
 // Run: pnpm --filter @zenzipjs/example-email-queue start
 // Kill it mid-run and start again: pending/in-flight jobs survive.
-import { zenzip } from "zenzip";
+import { zenzip } from "zenzipjs";
 
 const RUN_FOR_MS = Number(process.env.RUN_FOR_MS ?? 15_000);
 

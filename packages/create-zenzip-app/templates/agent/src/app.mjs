@@ -11,7 +11,7 @@ import {
   mockToolUse,
   tool,
   zenzip,
-} from "zenzip";
+} from "zenzipjs";
 
 const app = zenzip();
 

@@ -2,8 +2,8 @@
   "name": "zenzip-monorepo",
   "private": true,
   "scripts": {
-    "build": "pnpm build:native && pnpm --filter zenzip build",
-    "test": "cargo test --workspace && pnpm --filter zenzip test",
+    "build": "pnpm build:native && pnpm --filter zenzipjs build",
+    "test": "cargo test --workspace && pnpm --filter zenzipjs test",
     "build:native": "pnpm --filter @zenzipjs/core-native build",
     "build:native:debug": "pnpm --filter @zenzipjs/core-native build:debug",
     "bench:boundary": "node bench/boundary.mjs",

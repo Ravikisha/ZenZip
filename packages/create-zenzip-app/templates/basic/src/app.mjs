@@ -3,7 +3,7 @@
 //
 // Try it: npm run dev → push happens on boot → watch http://127.0.0.1:4100
 // Then kill the process mid-workflow and start it again. It resumes.
-import { zenzip } from "zenzip";
+import { zenzip } from "zenzipjs";
 
 const app = zenzip();
 

@@ -59,8 +59,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:native
-      - run: pnpm --filter zenzip build
-      - run: pnpm --filter zenzip exec vitest run test/pg.test.ts
+      - run: pnpm --filter zenzipjs build
+      - run: pnpm --filter zenzipjs exec vitest run test/pg.test.ts
 
   native:
     name: Native build + JS tests + bench smoke (${{ matrix.os }})
@@ -80,8 +80,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build:native
-      - run: pnpm --filter zenzip build
-      - run: pnpm --filter zenzip test
+      - run: pnpm --filter zenzipjs build
+      - run: pnpm --filter zenzipjs test
       - name: Bench smoke (sqlite + tsfn)
         run: |
           node bench/sqlite.mjs

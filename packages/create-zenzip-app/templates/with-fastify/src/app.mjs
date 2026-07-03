@@ -1,7 +1,7 @@
 // ZenZip alongside Fastify: Fastify owns the HTTP surface, ZenZip owns
 // everything durable — same process, one SQLite file, no Redis/Temporal.
 import Fastify from "fastify";
-import { zenzip } from "zenzip";
+import { zenzip } from "zenzipjs";
 
 const app = zenzip();
 
