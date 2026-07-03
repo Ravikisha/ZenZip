@@ -10,16 +10,28 @@ Durable workflows, queues, schedules, events, state machines, and AI agents on a
 single Rust-powered runtime — with **zero infrastructure**. No Redis, no Temporal
 cluster, no RabbitMQ. `npm install` is the entire setup.
 
+[![npm](https://img.shields.io/npm/v/zenzipjs.svg)](https://www.npmjs.com/package/zenzipjs)
+[![license](https://img.shields.io/npm/l/zenzipjs.svg)](https://github.com/Ravikisha/ZenZip/blob/main/LICENSE)
+
+[**Docs**](https://zenzip.vercel.app) · [**Quickstart**](https://zenzip.vercel.app/docs/quickstart) · [**GitHub**](https://github.com/Ravikisha/ZenZip)
+
 </div>
 
 ---
 
+> **Package name:** ZenZip publishes to npm as **`zenzipjs`** (the `zenzip` name is
+> reserved on the registry). The import and API are `zenzip`.
+
 ```bash
-npm install zenzip
+# scaffold a new project (recommended)
+npm create zenzipjs-app@latest my-app
+
+# or add to an existing project
+npm install zenzipjs
 ```
 
 ```ts
-import { zenzip } from "zenzip";
+import { zenzip } from "zenzipjs";
 
 const app = zenzip(); // embedded SQLite store, zero config
 

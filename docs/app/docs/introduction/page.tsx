@@ -14,7 +14,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Introduction" };
+export const metadata: Metadata = {
+  title: "Introduction",
+  description:
+    "ZenZip is an agent-native backend framework for Node.js — durable queues, schedules, workflows, and agents on one embedded Rust engine, zero infrastructure.",
+  alternates: { canonical: "/docs/introduction" },
+  openGraph: {
+    title: "Introduction · ZenZip",
+    description:
+      "ZenZip is an agent-native backend framework for Node.js — durable queues, schedules, workflows, and agents on one embedded Rust engine, zero infrastructure.",
+    url: "/docs/introduction",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "what-is-zenzip", title: "What is ZenZip?" },
@@ -24,7 +36,7 @@ const toc = [
   { id: "status", title: "Project status" },
 ];
 
-const taste = `import { zenzip } from "zenzip";
+const taste = `import { zenzip } from "zenzipjs";
 
 const app = zenzip();                       // embedded SQLite store, zero config
 

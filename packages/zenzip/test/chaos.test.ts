@@ -41,7 +41,7 @@ function spawnWorker(
 
 it("survives repeated SIGKILLs mid-workflow without losing steps", async () => {
   if (!existsSync(distEntry)) {
-    throw new Error("dist/index.js missing — run `pnpm --filter zenzip build` first");
+    throw new Error("dist/index.js missing — run `pnpm --filter zenzipjs build` first");
   }
   const dir = mkdtempSync(join(tmpdir(), "zenzip-chaos-"));
   const logFile = join(dir, "effects.log");

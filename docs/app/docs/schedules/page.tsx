@@ -14,7 +14,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Schedules" };
+export const metadata: Metadata = {
+  title: "Schedules",
+  description:
+    "Persisted cron and interval schedules in ZenZip: survive restarts, respect IANA timezones, and choose overlap and missed-tick catchup policies for every fire.",
+  alternates: { canonical: "/docs/schedules" },
+  openGraph: {
+    title: "Schedules · ZenZip",
+    description:
+      "Persisted cron and interval schedules in ZenZip: survive restarts, respect IANA timezones, and choose overlap and missed-tick catchup policies for every fire.",
+    url: "/docs/schedules",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "basics", title: "Basics" },

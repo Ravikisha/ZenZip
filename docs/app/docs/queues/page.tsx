@@ -15,7 +15,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Queues" };
+export const metadata: Metadata = {
+  title: "Queues",
+  description:
+    "Durable at-least-once job queues on embedded SQLite: retries, backoff, a dead-letter queue, priorities, rate limits, per-key concurrency, and batch consumers.",
+  alternates: { canonical: "/docs/queues" },
+  openGraph: {
+    title: "Queues · ZenZip",
+    description:
+      "Durable at-least-once job queues on embedded SQLite: retries, backoff, a dead-letter queue, priorities, rate limits, per-key concurrency, and batch consumers.",
+    url: "/docs/queues",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "basics", title: "Basics" },

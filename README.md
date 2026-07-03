@@ -12,17 +12,29 @@ on a single Rust-powered runtime — with **zero infrastructure**.
 No Redis. No Temporal cluster. No RabbitMQ. No cron box.
 `npm install` is the entire setup.
 
-[![npm](https://img.shields.io/npm/v/zenzip.svg)](https://www.npmjs.com/package/zenzip)
-[![license](https://img.shields.io/npm/l/zenzip.svg)](LICENSE)
+[![npm](https://img.shields.io/npm/v/zenzipjs.svg)](https://www.npmjs.com/package/zenzipjs)
+[![npm downloads](https://img.shields.io/npm/dm/zenzipjs.svg)](https://www.npmjs.com/package/zenzipjs)
+[![license](https://img.shields.io/npm/l/zenzipjs.svg)](LICENSE)
+[![CI](https://github.com/Ravikisha/ZenZip/actions/workflows/ci.yml/badge.svg)](https://github.com/Ravikisha/ZenZip/actions/workflows/ci.yml)
+
+[**Docs**](https://zenzip.vercel.app) · [**Quickstart**](https://zenzip.vercel.app/docs/quickstart) · [**Benchmarks**](https://zenzip.vercel.app/docs/benchmarks) · [**Roadmap**](https://zenzip.vercel.app/docs/roadmap)
 
 ```bash
-npm install zenzip
+# scaffold a new project (recommended)
+npm create zenzipjs-app@latest my-app
+
+# or add to an existing project
+npm install zenzipjs
 ```
 
 *Status: pre-1.0, built in the open. **230+ tests green** (179 TypeScript + 54 Rust),
 including SIGKILL crash-injection and multi-node Postgres chaos.*
 
 </div>
+
+> **Package name:** ZenZip publishes to npm as **`zenzipjs`** — the `zenzip` name is
+> reserved on the registry. The import and public API are still `zenzip`
+> (`import { zenzip } from "zenzipjs"`).
 
 ---
 
@@ -55,7 +67,7 @@ later? Point the same API at Postgres with one config line.
 ## Sixty seconds of ZenZip
 
 ```ts
-import { zenzip, tool, anthropic } from "zenzip";
+import { zenzip, tool, anthropic } from "zenzipjs";
 
 const app = zenzip(); // embedded SQLite store, zero config
 
@@ -210,7 +222,7 @@ without re-calling the model for completed steps.
 
 Same-machine numbers (i5-1135G7, Node 22) — **relative signals, not marketing
 claims**. Reproduce with `pnpm bench:*`. Full methodology + caveats:
-[Benchmarks](docs/app/docs/benchmarks/page.tsx).
+[Benchmarks](https://zenzip.vercel.app/docs/benchmarks).
 
 **HTTP throughput — identical handlers, ZenZip vs Express 5 vs Fastify** (req/s, best-of):
 
@@ -257,13 +269,13 @@ CI doesn't just unit-test — it **kills things**:
 - with `encryptionKey` set → the secret payload appears in **no** on-disk file.
 
 Delivery semantics, versioning rules, and the idempotency guide:
-[Durability & Semantics](docs/app/docs/durability/page.tsx).
+[Durability & Semantics](https://zenzip.vercel.app/docs/durability).
 
 ## Architecture
 
 ```text
 ┌─────────────────────────────────────────────────────┐
-│  TypeScript API  (npm: zenzip)                       │
+│  TypeScript API  (npm: zenzipjs)                     │
 │  queues · schedules · workflows · agents · events    │
 │  machines · http/express · dashboard · MCP           │
 └──────────────────────┬──────────────────────────────┘
@@ -285,7 +297,7 @@ Delivery semantics, versioning rules, and the idempotency guide:
 ```
 
 Design decisions and architecture:
-[Architecture](docs/app/docs/architecture/page.tsx).
+[Architecture](https://zenzip.vercel.app/docs/architecture).
 
 ## Documentation
 
@@ -295,7 +307,7 @@ queues, schedules, workflows, agents, events, state machines, HTTP & dashboard,
 Express & middleware, configuration, **production & deployment**, migrating from
 Express/Fastify, comparisons, benchmarks, and the roadmap.
 
-**Deploying?** See the [Production & Deployment guide](docs/app/docs/production/page.tsx)
+**Deploying?** See the [Production & Deployment guide](https://zenzip.vercel.app/docs/production)
 and the reference `Dockerfile` + Kubernetes/Helm manifests in [`deploy/`](deploy/).
 
 ## Project status
@@ -314,7 +326,7 @@ and the reference `Dockerfile` + Kubernetes/Helm manifests in [`deploy/`](deploy
 | 10 | Flow control & scale (per-key concurrency, fairness, debounce, throttle, PG partitioning, radix router, benchmarks) | ✅ |
 | 6 / 11+ | Launch packaging, modular split, realtime/WebSocket layer | 🔜 |
 
-Full roadmap: [docs/app/docs/roadmap/page.tsx](docs/app/docs/roadmap/page.tsx).
+Full roadmap: [Roadmap](https://zenzip.vercel.app/docs/roadmap).
 
 ## Repository layout
 
@@ -322,7 +334,7 @@ Full roadmap: [docs/app/docs/roadmap/page.tsx](docs/app/docs/roadmap/page.tsx).
 crates/zenzip-core/     Rust engine: store trait, SQLite + Postgres impls,
                         queue/scheduler/workflow engines, event outbox, crypto
 packages/core-native/   napi-rs bridge crate + npm package (@zenzipjs/core-native)
-packages/zenzip/        Public TypeScript API (npm: zenzip)
+packages/zenzip/        Public TypeScript API (npm: zenzipjs)
 bench/                  Reproducible benchmarks (boundary, sqlite, http, compare)
 examples/               email-queue · demo-dashboard · support-agent
 docs/                   Documentation site (Next.js)
@@ -338,7 +350,7 @@ pnpm install
 pnpm build              # cargo + napi build (release) + TypeScript
 
 cargo test --workspace            # Rust tests (incl. PG multi-node if reachable)
-pnpm --filter zenzip test         # TypeScript tests (queues/workflows/agents/chaos/…)
+pnpm --filter zenzipjs test         # TypeScript tests (queues/workflows/agents/chaos/…)
 
 pnpm bench:compare      # ZenZip vs Express vs Fastify, identical handlers
 pnpm bench:boundary     # JS↔Rust call costs
@@ -354,6 +366,15 @@ Standing rules: CI green on win/mac/linux before merge; every feature lands with
 tests (crash-safety where applicable) and docs; benchmark regressions >10% block
 merge; the plan follows the code, never silently diverges.
 
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Links
+
+- 📚 **Documentation** — https://zenzip.vercel.app
+- 🚀 **Quickstart** — https://zenzip.vercel.app/docs/quickstart
+- 📦 **npm** — [`zenzipjs`](https://www.npmjs.com/package/zenzipjs) · scaffold: `npm create zenzipjs-app@latest`
+- 🐙 **GitHub** — https://github.com/Ravikisha/ZenZip
+- 🐛 **Issues** — https://github.com/Ravikisha/ZenZip/issues
 
 ## Author
 Ravi Kishan

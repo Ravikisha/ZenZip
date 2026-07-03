@@ -14,7 +14,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Events" };
+export const metadata: Metadata = {
+  title: "Events",
+  description:
+    "ZenZip's atomic event outbox: one transaction persists an emit, wakes matching waiters, and durably triggers workflows — plus ephemeral wildcard subscribers.",
+  alternates: { canonical: "/docs/events" },
+  openGraph: {
+    title: "Events · ZenZip",
+    description:
+      "ZenZip's atomic event outbox: one transaction persists an emit, wakes matching waiters, and durably triggers workflows — plus ephemeral wildcard subscribers.",
+    url: "/docs/events",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "emit", title: "app.emit" },

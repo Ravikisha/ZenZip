@@ -15,7 +15,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Express & Middleware" };
+export const metadata: Metadata = {
+  title: "Express & Middleware",
+  description:
+    "ZenZip's HTTP layer is Express-shaped: app.use(), routers, the (req, res, next) signature, and built-in middleware — right beside durable queues, workflows, and agents.",
+  alternates: { canonical: "/docs/express" },
+  openGraph: {
+    title: "Express & Middleware · ZenZip",
+    description:
+      "ZenZip's HTTP layer is Express-shaped: app.use(), routers, the (req, res, next) signature, and built-in middleware — right beside durable queues, workflows, and agents.",
+    url: "/docs/express",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "middleware", title: "Middleware — app.use()" },
@@ -177,7 +189,7 @@ export default function Page() {
         validation → 400, everything else → 500.
       </P>
       <CodeBlock
-        code={`import { HttpError } from "zenzip";
+        code={`import { HttpError } from "zenzipjs";
 
 app.get("/orders/:id", (ctx) => {
   const order = db.find(ctx.params.id);

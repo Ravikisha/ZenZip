@@ -44,7 +44,7 @@ export function SiteHeader() {
         </nav>
         <div className="flex items-center gap-2">
           <Link
-            href="https://github.com"
+            href="https://github.com/Ravikisha/ZenZip"
             className="grid size-9 place-items-center rounded-lg border border-edge text-ink-mid transition-colors hover:border-zinc-600 hover:text-ink"
             aria-label="GitHub repository"
           >

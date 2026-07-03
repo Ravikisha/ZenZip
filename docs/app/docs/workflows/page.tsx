@@ -15,7 +15,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Workflows" };
+export const metadata: Metadata = {
+  title: "Workflows",
+  description:
+    "Durable, step-memoized workflows in ZenZip: write a plain async function and get crash-proof orchestration with retries, sleeps, event waits, and child runs.",
+  alternates: { canonical: "/docs/workflows" },
+  openGraph: {
+    title: "Workflows · ZenZip",
+    description:
+      "Durable, step-memoized workflows in ZenZip: write a plain async function and get crash-proof orchestration with retries, sleeps, event waits, and child runs.",
+    url: "/docs/workflows",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "defining", title: "Defining a workflow" },

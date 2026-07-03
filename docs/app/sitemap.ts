@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 import { flatNav } from "@/lib/docs-nav";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://zenzip.dev";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://zenzip.vercel.app";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const paths = ["/", "/docs", ...flatNav.map((n) => n.href)];

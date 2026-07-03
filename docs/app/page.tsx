@@ -26,7 +26,7 @@ import { Marquee } from "@/components/ui/marquee";
 import { Spotlight } from "@/components/ui/spotlight";
 import { cn } from "@/lib/utils";
 
-const heroCode = `import { zenzip } from "zenzip";
+const heroCode = `import { zenzip } from "zenzipjs";
 
 const app = zenzip(); // zero config — embedded SQLite WAL store
 
@@ -191,9 +191,10 @@ export default function Home() {
                 </ButtonLink>
               </div>
               <div className="mt-8 max-w-md">
-                <CommandLine command="npm install zenzip" />
+                <CommandLine command="npm create zenzipjs-app@latest my-app" />
                 <p className="mt-2 text-xs text-ink-dim">
-                  Pre-1.0, building in the open. Phases 0–10 shipped — durable
+                  or <span className="text-ink">npm install zenzipjs</span> ·
+                  pre-1.0, building in the open. Phases 0–10 shipped — durable
                   engine, agents, flow control, encryption, all chaos-tested.
                 </p>
               </div>

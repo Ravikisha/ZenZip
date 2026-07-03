@@ -14,7 +14,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Durability & Semantics" };
+export const metadata: Metadata = {
+  title: "Durability & Semantics",
+  description:
+    "ZenZip's durability contract: step memoization, at-least-once delivery, suspensions, retries, versioning, encryption at rest, and exactly what a crash does.",
+  alternates: { canonical: "/docs/durability" },
+  openGraph: {
+    title: "Durability & Semantics · ZenZip",
+    description:
+      "ZenZip's durability contract: step memoization, at-least-once delivery, suspensions, retries, versioning, encryption at rest, and exactly what a crash does.",
+    url: "/docs/durability",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "model", title: "Execution model" },

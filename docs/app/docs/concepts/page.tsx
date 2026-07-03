@@ -14,7 +14,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Concepts" };
+export const metadata: Metadata = {
+  title: "Concepts",
+  description:
+    "The ZenZip mental model: one engine under queues, workflows, agents, and machines — the vocabulary, the app lifecycle, and which primitive to reach for.",
+  alternates: { canonical: "/docs/concepts" },
+  openGraph: {
+    title: "Concepts · ZenZip",
+    description:
+      "The ZenZip mental model: one engine under queues, workflows, agents, and machines — the vocabulary, the app lifecycle, and which primitive to reach for.",
+    url: "/docs/concepts",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "one-engine", title: "One engine" },
@@ -25,7 +37,7 @@ const toc = [
   { id: "where-state", title: "Where state lives" },
 ];
 
-const lifecycle = `import { zenzip } from "zenzip";
+const lifecycle = `import { zenzip } from "zenzipjs";
 
 const app = zenzip();              // 1. construct — no I/O yet
 

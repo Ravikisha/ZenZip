@@ -11,7 +11,19 @@ import {
 } from "@/components/docs/typography";
 import { Badge } from "@/components/ui/badge";
 
-export const metadata: Metadata = { title: "Roadmap" };
+export const metadata: Metadata = {
+  title: "Roadmap",
+  description:
+    "What's shipped in ZenZip today — queues, workflows, events, agents, Postgres multi-node, and production hardening — plus what's in progress and coming next.",
+  alternates: { canonical: "/docs/roadmap" },
+  openGraph: {
+    title: "Roadmap · ZenZip",
+    description:
+      "What's shipped in ZenZip today — queues, workflows, events, agents, Postgres multi-node, and production hardening — plus what's in progress and coming next.",
+    url: "/docs/roadmap",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "today", title: "Available today" },

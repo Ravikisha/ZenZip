@@ -4,7 +4,19 @@ import { CodeBlock } from "@/components/code-block";
 import { DocPage } from "@/components/docs/doc-page";
 import { A, Code, H2, LI, P, Strong, Table, UL } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Production & Deployment" };
+export const metadata: Metadata = {
+  title: "Production & Deployment",
+  description:
+    "Take a ZenZip app to production: secrets, encryption at rest, health probes, security, observability, multi-tenancy, scaling to Postgres, and Kubernetes.",
+  alternates: { canonical: "/docs/production" },
+  openGraph: {
+    title: "Production & Deployment · ZenZip",
+    description:
+      "Take a ZenZip app to production: secrets, encryption at rest, health probes, security, observability, multi-tenancy, scaling to Postgres, and Kubernetes.",
+    url: "/docs/production",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "models", title: "Deployment models" },
@@ -19,7 +31,7 @@ const toc = [
   { id: "checklist", title: "Production checklist" },
 ];
 
-const prodConfig = `import { zenzip, sentryReporter, pinoLogger, resolveSecret } from "zenzip";
+const prodConfig = `import { zenzip, sentryReporter, pinoLogger, resolveSecret } from "zenzipjs";
 import pino from "pino";
 import * as Sentry from "@sentry/node";
 

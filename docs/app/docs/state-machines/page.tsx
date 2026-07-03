@@ -13,7 +13,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "State Machines" };
+export const metadata: Metadata = {
+  title: "State Machines",
+  description:
+    "Persisted, transition-validated state machines in ZenZip — XState-lite backed by the store, with every transition emitted atomically through the event bus.",
+  alternates: { canonical: "/docs/state-machines" },
+  openGraph: {
+    title: "State Machines · ZenZip",
+    description:
+      "Persisted, transition-validated state machines in ZenZip — XState-lite backed by the store, with every transition emitted atomically through the event bus.",
+    url: "/docs/state-machines",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "basics", title: "Basics" },

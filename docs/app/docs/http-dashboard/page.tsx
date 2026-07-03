@@ -14,7 +14,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "HTTP & Dashboard" };
+export const metadata: Metadata = {
+  title: "HTTP & Dashboard",
+  description:
+    "ZenZip's minimal HTTP adapter shares the runtime with your handlers, adds one-line webhook-to-workflow triggers, and ships an embedded live observability dashboard.",
+  alternates: { canonical: "/docs/http-dashboard" },
+  openGraph: {
+    title: "HTTP & Dashboard · ZenZip",
+    description:
+      "ZenZip's minimal HTTP adapter shares the runtime with your handlers, adds one-line webhook-to-workflow triggers, and ships an embedded live observability dashboard.",
+    url: "/docs/http-dashboard",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "routes", title: "Routes" },

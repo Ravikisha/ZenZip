@@ -21,7 +21,7 @@ afterEach(async () => {
 
 it("redelivers a job after the worker process is SIGKILLed mid-job", async () => {
   if (!existsSync(distEntry)) {
-    throw new Error("dist/index.js missing — run `pnpm --filter zenzip build` first");
+    throw new Error("dist/index.js missing — run `pnpm --filter zenzipjs build` first");
   }
   const dir = mkdtempSync(join(tmpdir(), "zenzip-crash-"));
   cleanups.push(async () => {

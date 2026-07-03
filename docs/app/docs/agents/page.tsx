@@ -15,7 +15,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Agents" };
+export const metadata: Metadata = {
+  title: "Agents",
+  description:
+    "Durable LLM agents in ZenZip: every model call and tool run is a journaled step — crash recovery, retries without re-prompting, MCP, memory, and approval gates.",
+  alternates: { canonical: "/docs/agents" },
+  openGraph: {
+    title: "Agents · ZenZip",
+    description:
+      "Durable LLM agents in ZenZip: every model call and tool run is a journaled step — crash recovery, retries without re-prompting, MCP, memory, and approval gates.",
+    url: "/docs/agents",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "model", title: "Agents are workflows" },
@@ -34,7 +46,7 @@ const toc = [
   { id: "options", title: "Options" },
 ];
 
-const defining = `import { anthropic, tool, zenzip } from "zenzip";
+const defining = `import { anthropic, tool, zenzip } from "zenzipjs";
 
 const app = zenzip();
 
@@ -94,7 +106,7 @@ await support.run("What's my name?", { sessionId: "cus_7" });
 
 const transcript = await support.session("cus_7");  // LlmMessage[]`;
 
-const mcpCode = `import { mcp } from "zenzip";
+const mcpCode = `import { mcp } from "zenzipjs";
 
 // CONSUME — connect to an MCP server and use its tools. Connecting is
 // async, so spread the result into the agent's tools:
@@ -119,7 +131,7 @@ await app.mcpServer({ port: 4200, token: process.env.MCP_TOKEN });
 // Or embed the endpoint in an existing server instead of a standalone one:
 http.createServer(app.mcpHandler()).listen(4200);`;
 
-const handoff = `import { handoffTool } from "zenzip";
+const handoff = `import { handoffTool } from "zenzipjs";
 
 const researcher = app.agent("researcher", { provider, model, tools: [webSearch] });
 
@@ -143,7 +155,7 @@ const { output } = await classifier.run("Classify: great product!");
 // output is parsed + validated; one corrective round on invalid JSON,
 // then the run fails with the validation error.`;
 
-const providers = `import { anthropic, openaiCompatible, mockProvider, mockText, mockToolUse } from "zenzip";
+const providers = `import { anthropic, openaiCompatible, mockProvider, mockText, mockToolUse } from "zenzipjs";
 
 anthropic({ apiKey })                       // Messages API, tool use, SSE
                                             // streaming, prompt caching on
@@ -262,7 +274,7 @@ export default function Page() {
         never re-run on replay.
       </P>
       <CodeBlock
-        code={`import { AgentMemory, openaiEmbeddings } from "zenzip";
+        code={`import { AgentMemory, openaiEmbeddings } from "zenzipjs";
 
 const memory = new AgentMemory({
   embeddings: openaiEmbeddings({ apiKey: process.env.OPENAI_API_KEY }),
@@ -296,7 +308,7 @@ const agent = app.agent("support", { provider, model, memory });`}
         cancellation propagation.
       </P>
       <CodeBlock
-        code={`import { zenzip } from "zenzip";
+        code={`import { zenzip } from "zenzipjs";
 
 const app = zenzip();
 
@@ -349,7 +361,7 @@ const res = await support.run("I was double-charged and the app crashes");
         a tool, a webhook fan-out, anything:
       </P>
       <CodeBlock
-        code={`import { circuitBreaker, CircuitOpenError } from "zenzip";
+        code={`import { circuitBreaker, CircuitOpenError } from "zenzipjs";
 
 const payments = circuitBreaker({ failureThreshold: 3, resetTimeout: "10s" });
 
@@ -378,7 +390,7 @@ try {
         <Code>runEvals()</Code>.
       </P>
       <CodeBlock
-        code={`import { runEvals, contains, jsonValid, llmJudge, anthropic } from "zenzip";
+        code={`import { runEvals, contains, jsonValid, llmJudge, anthropic } from "zenzipjs";
 
 const judge = llmJudge({
   provider: anthropic(), model: "claude-sonnet-4-6",

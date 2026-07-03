@@ -13,7 +13,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Quickstart" };
+export const metadata: Metadata = {
+  title: "Quickstart",
+  description:
+    "Install ZenZip and build a durable queue, a persisted cron schedule, and a crash-proof workflow in one file — then kill the process and watch it recover.",
+  alternates: { canonical: "/docs/quickstart" },
+  openGraph: {
+    title: "Quickstart · ZenZip",
+    description:
+      "Install ZenZip and build a durable queue, a persisted cron schedule, and a crash-proof workflow in one file — then kill the process and watch it recover.",
+    url: "/docs/quickstart",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "install", title: "Install" },
@@ -23,7 +35,7 @@ const toc = [
   { id: "next-steps", title: "Next steps" },
 ];
 
-const firstApp = `import { zenzip } from "zenzip";
+const firstApp = `import { zenzip } from "zenzipjs";
 
 const app = zenzip({ dataDir: ".zenzip" });
 
@@ -78,14 +90,19 @@ export default function Page() {
       toc={toc}
     >
       <H2 id="install">Install</H2>
-      <CommandLine command="npm install zenzip" />
-      <Callout type="warn" title="Alpha distribution">
+      <P>Scaffold a new project (recommended):</P>
+      <CommandLine command="npm create zenzipjs-app@latest my-app" />
+      <P>Or add ZenZip to an existing project:</P>
+      <CommandLine command="npm install zenzipjs" />
+      <Callout type="info" title="Package name">
         <p>
-          ZenZip is pre-publication. Today you build from the monorepo:{" "}
-          <code>pnpm install &amp;&amp; pnpm build</code> compiles the Rust
-          native module (Rust stable + Node 18+ required) and the TypeScript
-          package. npm prebuilds for all platforms ship with the upcoming
-          public alpha release.
+          ZenZip publishes to npm as <code>zenzipjs</code> — the{" "}
+          <code>zenzip</code> name is reserved on the registry. The import and
+          public API are still <code>zenzip</code>:{" "}
+          <code>import {"{"} zenzip {"}"} from &quot;zenzipjs&quot;</code>.
+          Prebuilt native binaries ship for Windows, macOS (x64 + arm64), and
+          Linux (glibc + musl, x64 + arm64), so <code>npm install</code> needs
+          no Rust toolchain.
         </p>
       </Callout>
       <P>

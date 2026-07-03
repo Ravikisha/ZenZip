@@ -12,7 +12,7 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // Generated typedoc API reference (pnpm --filter zenzip docs:api).
+    // Generated typedoc API reference (pnpm --filter zenzipjs docs:api).
     "public/api/**",
   ]),
 ]);

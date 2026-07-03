@@ -13,7 +13,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Configuration" };
+export const metadata: Metadata = {
+  title: "Configuration",
+  description:
+    "Every option on zenzip(): data directory, SQLite or Postgres storage, duration strings, structured logging, retention GC, health probes, and the app lifecycle.",
+  alternates: { canonical: "/docs/configuration" },
+  openGraph: {
+    title: "Configuration · ZenZip",
+    description:
+      "Every option on zenzip(): data directory, SQLite or Postgres storage, duration strings, structured logging, retention GC, health probes, and the app lifecycle.",
+    url: "/docs/configuration",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "options", title: "zenzip() options" },
@@ -54,7 +66,7 @@ zenzip({ retention: { runs: "off", events: "off" } });
 // Run a GC pass on demand (ops / cron): returns rows removed.
 const { runs, steps, events } = app.gc();`;
 
-const fullConfig = `import { zenzip } from "zenzip";
+const fullConfig = `import { zenzip } from "zenzipjs";
 
 const app = zenzip({
   dataDir: ".zenzip",                  // where the SQLite store lives

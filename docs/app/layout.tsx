@@ -7,7 +7,7 @@ const GA_ID = "G-PQ25GW61LR";
 
 // Set NEXT_PUBLIC_SITE_URL to your deployed origin before publishing — it
 // anchors canonical URLs, Open Graph image paths, sitemap, and robots.
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://zenzip.dev";
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://zenzip.vercel.app";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",

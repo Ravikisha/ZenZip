@@ -11,7 +11,7 @@ Rust stable, Node 18+, pnpm. Optional: PostgreSQL for the multi-node tests.
 pnpm install
 pnpm build                  # native (cargo + napi, release) + TypeScript
 cargo test --workspace      # Rust suite (PG tests skip without a server)
-pnpm --filter zenzip test   # TypeScript suite
+pnpm --filter zenzipjs test   # TypeScript suite
 
 # Postgres tests (optional locally; CI always runs them):
 #   ZENZIP_PG_TEST_URL=postgres://user:pass@127.0.0.1:5432/zenzip_test

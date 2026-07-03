@@ -13,7 +13,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Comparisons" };
+export const metadata: Metadata = {
+  title: "Comparisons",
+  description:
+    "Honest positioning of ZenZip against Temporal, Inngest, Trigger.dev, and BullMQ — including the cases where each of those tools is the better choice.",
+  alternates: { canonical: "/docs/comparison" },
+  openGraph: {
+    title: "Comparisons · ZenZip",
+    description:
+      "Honest positioning of ZenZip against Temporal, Inngest, Trigger.dev, and BullMQ — including the cases where each of those tools is the better choice.",
+    url: "/docs/comparison",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "summary", title: "The short version" },

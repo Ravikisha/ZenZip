@@ -4,7 +4,19 @@ import { CodeBlock } from "@/components/code-block";
 import { DocPage } from "@/components/docs/doc-page";
 import { A, Callout, Code, H2, H3, LI, P, Table, UL } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Migrating to ZenZip" };
+export const metadata: Metadata = {
+  title: "Migrating to ZenZip",
+  description:
+    "Side-by-side migration guides to ZenZip from the tools it replaces — Express for HTTP, and BullMQ, Inngest, and Temporal for durable background work.",
+  alternates: { canonical: "/docs/migrating" },
+  openGraph: {
+    title: "Migrating to ZenZip · ZenZip",
+    description:
+      "Side-by-side migration guides to ZenZip from the tools it replaces — Express for HTTP, and BullMQ, Inngest, and Temporal for durable background work.",
+    url: "/docs/migrating",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "express", title: "Coming from Express" },
@@ -26,7 +38,7 @@ app.use("/api", api);
 app.use((err, req, res, next) => res.status(500).json({ error: err.message }));
 app.listen(3000);`;
 
-const expressAfter = `import { zenzip } from "zenzip";
+const expressAfter = `import { zenzip } from "zenzipjs";
 const app = zenzip();
 
 app.use(zenzip.json());
@@ -51,7 +63,7 @@ new Worker("emails", async (job) => {
 
 await emails.add("welcome", { to: "a@b.com" }, { attempts: 3 });`;
 
-const bullmqAfter = `import { zenzip } from "zenzip";
+const bullmqAfter = `import { zenzip } from "zenzipjs";
 const app = zenzip();                       // no Redis — embedded store
 
 const emails = app.queue("emails", { concurrency: 5, retries: 2 });
@@ -77,7 +89,7 @@ export const onSignup = inngest.createFunction(
 
 await inngest.send({ name: "user.created", data: { id: 1 } });`;
 
-const inngestAfter = `import { zenzip } from "zenzip";
+const inngestAfter = `import { zenzip } from "zenzipjs";
 const app = zenzip();
 
 app.workflow("welcome", { on: "user.created" }, async ({ step, input }) => {
@@ -99,7 +111,7 @@ export async function order(input) {
 }
 // Worker.create({ taskQueue, workflows, activities }) + cluster + UI`;
 
-const temporalAfter = `import { zenzip } from "zenzip";
+const temporalAfter = `import { zenzip } from "zenzipjs";
 const app = zenzip();                       // no cluster, no separate worker
 
 app.workflow("order", async ({ step, input }) => {

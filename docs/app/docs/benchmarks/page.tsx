@@ -14,7 +14,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Benchmarks" };
+export const metadata: Metadata = {
+  title: "Benchmarks",
+  description:
+    "The measurements behind ZenZip's design: the NAPI boundary cost, handler dispatch, the HTTP no-go verdict, and SQLite and Postgres throughput at scale.",
+  alternates: { canonical: "/docs/benchmarks" },
+  openGraph: {
+    title: "Benchmarks · ZenZip",
+    description:
+      "The measurements behind ZenZip's design: the NAPI boundary cost, handler dispatch, the HTTP no-go verdict, and SQLite and Postgres throughput at scale.",
+    url: "/docs/benchmarks",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "why", title: "Why benchmark first" },

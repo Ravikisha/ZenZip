@@ -14,7 +14,19 @@ import {
   UL,
 } from "@/components/docs/typography";
 
-export const metadata: Metadata = { title: "Architecture" };
+export const metadata: Metadata = {
+  title: "Architecture",
+  description:
+    "How ZenZip embeds a Rust engine in your Node process: the napi-rs boundary, one engine behind every feature, SQLite and Postgres storage, and the decision log.",
+  alternates: { canonical: "/docs/architecture" },
+  openGraph: {
+    title: "Architecture · ZenZip",
+    description:
+      "How ZenZip embeds a Rust engine in your Node process: the napi-rs boundary, one engine behind every feature, SQLite and Postgres storage, and the decision log.",
+    url: "/docs/architecture",
+    type: "article",
+  },
+};
 
 const toc = [
   { id: "overview", title: "Overview" },
@@ -26,7 +38,7 @@ const toc = [
 ];
 
 const diagram = `┌─────────────────────────────────────────────────────┐
-│  TypeScript API  (npm: zenzip)                       │
+│  TypeScript API  (npm: zenzipjs)                     │
 │  app.queue() · app.schedule() · app.workflow()       │
 │  app.emit() · typed payloads · Standard Schema       │
 └──────────────────────┬──────────────────────────────┘
