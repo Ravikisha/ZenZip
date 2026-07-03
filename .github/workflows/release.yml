@@ -72,7 +72,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Build native module
         run: >-
-          pnpm --filter @zenzip/core-native exec napi build --platform --release
+          pnpm --filter @zenzipjs/core-native exec napi build --platform --release
           --target ${{ matrix.settings.target }}
           ${{ matrix.settings.cross && '-x' || '' }}
       - uses: actions/upload-artifact@v4
@@ -102,8 +102,8 @@ jobs:
         # napi v3: `--dir` → `--output-dir`; the npm/<target> package dirs must
         # exist first (create-npm-dirs), then artifacts copies each .node in.
         run: |
-          pnpm --filter @zenzip/core-native exec napi create-npm-dirs
-          pnpm --filter @zenzip/core-native exec napi artifacts --output-dir ../../artifacts
+          pnpm --filter @zenzipjs/core-native exec napi create-npm-dirs
+          pnpm --filter @zenzipjs/core-native exec napi artifacts --output-dir ../../artifacts
       - name: Build TypeScript package
         run: pnpm --filter zenzip build
       # Software Bill of Materials: CycloneDX SBOM attached to the release.
@@ -121,13 +121,13 @@ jobs:
       # package — that's the next step. --no-gh-release: skip creating a GitHub
       # release object (nothing downstream consumes it, and it was 401'ing
       # regardless of GITHUB_TOKEN wiring).
-      - name: Publish @zenzip/core-native platform packages
-        run: pnpm --filter @zenzip/core-native exec napi prepublish -t npm --no-gh-release
+      - name: Publish @zenzipjs/core-native platform packages
+        run: pnpm --filter @zenzipjs/core-native exec napi prepublish -t npm --no-gh-release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
-      - name: Publish @zenzip/core-native main package
-        run: pnpm --filter @zenzip/core-native publish --no-git-checks --access public --provenance
+      - name: Publish @zenzipjs/core-native main package
+        run: pnpm --filter @zenzipjs/core-native publish --no-git-checks --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Publish zenzip

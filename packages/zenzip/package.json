@@ -1,6 +1,6 @@
 {
   "name": "zenzip",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Agent-native backend framework for Node.js: durable workflows, queues, schedules, events, and AI agents on a Rust-powered runtime with zero infrastructure.",
   "keywords": [
     "durable-workflows",
